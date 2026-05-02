@@ -12,6 +12,11 @@ import { PaymentMethod, PaymentStatus, OrderStatus, UserRole } from '../types/in
 const router = Router();
 const DEMO_WALLET_STARTER_BALANCE = 100;
 
+const isValidUUID = (str: string): boolean => {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return typeof str === 'string' && uuidRegex.test(str.trim());
+};
+
 const stripe = new Stripe(config.stripe.secretKey, {
   apiVersion: '2023-10-16',
 });
@@ -94,7 +99,11 @@ async function loadWalletWithTransactions(userId: string) {
 router.post(
   '/create-intent',
   authenticate,
-  body('orderId').isMongoId().withMessage('Valid order ID is required'),
+  body('orderId')
+    .isString()
+    .trim()
+    .custom((value) => isValidUUID(value))
+    .withMessage('Valid order ID is required'),
   asyncHandler(async (req: Request, res: Response) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -200,7 +209,11 @@ router.post(
 router.post(
   '/wallet/pay',
   authenticate,
-  body('orderId').isMongoId().withMessage('Valid order ID is required'),
+  body('orderId')
+    .isString()
+    .trim()
+    .custom((value) => isValidUUID(value))
+    .withMessage('Valid order ID is required'),
   asyncHandler(async (req: Request, res: Response) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -277,7 +290,11 @@ router.post(
   authenticate,
   authorize(UserRole.ADMIN_SUPER, UserRole.ADMIN_FINANCE),
   [
-    body('paymentId').isMongoId().withMessage('Valid payment ID is required'),
+    body('paymentId')
+      .isString()
+      .trim()
+      .custom((value) => isValidUUID(value))
+      .withMessage('Valid payment ID is required'),
     body('amount').optional().isFloat({ min: 0.01 }).withMessage('Invalid amount'),
     body('reason').notEmpty().withMessage('Reason is required'),
   ],

@@ -417,7 +417,11 @@ export default function Checkout() {
                         </div>
                       </label>
                     ))}
-                    <button className="w-full p-4 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl text-gray-500 hover:border-primary-500 hover:text-primary-600 transition flex items-center justify-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => navigate('/profile?tab=addresses')}
+                      className="w-full p-4 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl text-gray-500 hover:border-primary-500 hover:text-primary-600 transition flex items-center justify-center gap-2"
+                    >
                       <PlusIcon className="w-5 h-5" />
                       Add New Address
                     </button>

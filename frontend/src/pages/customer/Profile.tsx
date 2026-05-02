@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   UserIcon,
@@ -66,6 +67,7 @@ const tabs = [
 
 export default function Profile() {
   const { user } = useAppSelector((state) => state.auth);
+  const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState('personal');
   const [isLoading, setIsLoading] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -74,6 +76,13 @@ export default function Profile() {
     return localStorage.getItem('darkMode') === 'true' ||
       (!localStorage.getItem('darkMode') && window.matchMedia('(prefers-color-scheme: dark)').matches);
   });
+
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab && tabs.some((t) => t.id === tab)) {
+      setActiveTab(tab);
+    }
+  }, [searchParams]);
 
   // Personal Info State
   const [personalInfo, setPersonalInfo] = useState({
