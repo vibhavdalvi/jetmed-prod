@@ -243,9 +243,9 @@ router.post(
   authenticate,
   authorize(UserRole.CUSTOMER),
   [
-    body('addressId').isUUID().withMessage('Valid address ID is required'),
+    body('addressId').isMongoId().withMessage('Valid address ID is required'),
     body('items').isArray({ min: 1 }).withMessage('At least one item is required'),
-    body('items.*.medicineId').isUUID().withMessage('Valid medicine ID is required'),
+    body('items.*.medicineId').isMongoId().withMessage('Valid medicine ID is required'),
     body('items.*.dosageOptionId').notEmpty().withMessage('Dosage option is required'),
     body('items.*.quantity').isInt({ min: 1, max: 10 }).withMessage('Quantity must be 1-10'),
     body('deliveryType').isIn(Object.values(DeliveryType)).withMessage('Invalid delivery type'),

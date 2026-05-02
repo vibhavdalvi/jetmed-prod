@@ -16,6 +16,70 @@ const stripe = new Stripe(config.stripe.secretKey, {
   apiVersion: '2023-10-16',
 });
 
+/** Registered in `index.ts` with `express.raw` — Stripe signature verification requires unparsed body. */
+export const stripeWebhookHandler = asyncHandler(async (req: Request, res: Response) => {
+  const sig = req.headers['stripe-signature'] as string;
+  let event: Stripe.Event;
+
+  try {
+    const payload = req.body as Buffer | string;
+    event = stripe.webhooks.constructEvent(payload, sig, config.stripe.webhookSecret);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Webhook signature verification failed:', msg);
+    return res.status(400).send(`Webhook Error: ${msg}`);
+  }
+
+  switch (event.type) {
+    case 'payment_intent.succeeded': {
+      const paymentIntent = event.data.object as Stripe.PaymentIntent;
+
+      if (paymentIntent.metadata.type === 'wallet_topup') {
+        const wallet = await Wallet.findOne({
+          userId: paymentIntent.metadata.userId,
+        });
+
+        if (wallet) {
+          const amount = paymentIntent.amount / 100;
+          const newBalance = Number(wallet.balance || 0) + amount;
+          wallet.balance = newBalance;
+          await wallet.save();
+
+          await WalletTransaction.create({
+            walletId: wallet.id,
+            type: 'credit',
+            amount,
+            description: 'Wallet top-up',
+            referenceType: 'topup',
+            referenceId: paymentIntent.id,
+            balanceAfter: newBalance,
+          });
+        }
+      }
+      break;
+    }
+
+    case 'payment_intent.payment_failed': {
+      const paymentIntent = event.data.object as Stripe.PaymentIntent;
+
+      const payment = await Payment.findOne({
+        stripePaymentIntentId: paymentIntent.id,
+      });
+
+      if (payment) {
+        payment.status = PaymentStatus.FAILED;
+        payment.failureReason = paymentIntent.last_payment_error?.message;
+        await payment.save();
+      }
+      break;
+    }
+    default:
+      break;
+  }
+
+  res.json({ received: true });
+});
+
 async function loadWalletWithTransactions(userId: string) {
   const wallet = await Wallet.findOne({ userId });
   if (!wallet) return null;
@@ -30,7 +94,7 @@ async function loadWalletWithTransactions(userId: string) {
 router.post(
   '/create-intent',
   authenticate,
-  body('orderId').isUUID().withMessage('Valid order ID is required'),
+  body('orderId').isMongoId().withMessage('Valid order ID is required'),
   asyncHandler(async (req: Request, res: Response) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -136,7 +200,7 @@ router.post(
 router.post(
   '/wallet/pay',
   authenticate,
-  body('orderId').isUUID().withMessage('Valid order ID is required'),
+  body('orderId').isMongoId().withMessage('Valid order ID is required'),
   asyncHandler(async (req: Request, res: Response) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -213,7 +277,7 @@ router.post(
   authenticate,
   authorize(UserRole.ADMIN_SUPER, UserRole.ADMIN_FINANCE),
   [
-    body('paymentId').isUUID().withMessage('Valid payment ID is required'),
+    body('paymentId').isMongoId().withMessage('Valid payment ID is required'),
     body('amount').optional().isFloat({ min: 0.01 }).withMessage('Invalid amount'),
     body('reason').notEmpty().withMessage('Reason is required'),
   ],
@@ -369,68 +433,6 @@ router.post(
         transaction,
       },
     });
-  })
-);
-
-router.post(
-  '/webhook',
-  asyncHandler(async (req: Request, res: Response) => {
-    const sig = req.headers['stripe-signature'] as string;
-    let event: Stripe.Event;
-
-    try {
-      event = stripe.webhooks.constructEvent(req.body, sig, config.stripe.webhookSecret);
-    } catch (err: any) {
-      console.error('Webhook signature verification failed:', err.message);
-      return res.status(400).send(`Webhook Error: ${err.message}`);
-    }
-
-    switch (event.type) {
-      case 'payment_intent.succeeded': {
-        const paymentIntent = event.data.object as Stripe.PaymentIntent;
-
-        if (paymentIntent.metadata.type === 'wallet_topup') {
-          const wallet = await Wallet.findOne({
-            userId: paymentIntent.metadata.userId,
-          });
-
-          if (wallet) {
-            const amount = paymentIntent.amount / 100;
-            const newBalance = Number(wallet.balance || 0) + amount;
-            wallet.balance = newBalance;
-            await wallet.save();
-
-            await WalletTransaction.create({
-              walletId: wallet.id,
-              type: 'credit',
-              amount,
-              description: 'Wallet top-up',
-              referenceType: 'topup',
-              referenceId: paymentIntent.id,
-              balanceAfter: newBalance,
-            });
-          }
-        }
-        break;
-      }
-
-      case 'payment_intent.payment_failed': {
-        const paymentIntent = event.data.object as Stripe.PaymentIntent;
-
-        const payment = await Payment.findOne({
-          stripePaymentIntentId: paymentIntent.id,
-        });
-
-        if (payment) {
-          payment.status = PaymentStatus.FAILED;
-          payment.failureReason = paymentIntent.last_payment_error?.message;
-          await payment.save();
-        }
-        break;
-      }
-    }
-
-    res.json({ received: true });
   })
 );
 

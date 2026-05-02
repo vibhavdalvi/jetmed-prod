@@ -62,7 +62,7 @@ router.post('/call/token', authenticate, [
  * @desc    Initiate a call for an order
  */
 router.post('/call/initiate', authenticate, authorize(UserRole.PHARMACIST, UserRole.SENIOR_PHARMACIST, UserRole.ADMIN_SUPER, UserRole.CUSTOMER), [
-  body('orderId').isUUID(),
+  body('orderId').isMongoId(),
   body('type').isIn(['video', 'audio']),
 ], asyncHandler(async (req: Request, res: Response) => {
   const errors = validationResult(req);
@@ -181,7 +181,7 @@ router.post('/call/end', authenticate, [
  * @desc    Send chat message
  */
 router.post('/chat/send', authenticate, [
-  body('orderId').isUUID(),
+  body('orderId').isMongoId(),
   body('message').notEmpty(),
   body('type').optional().isIn(['text', 'image', 'file']),
 ], asyncHandler(async (req: Request, res: Response) => {

@@ -49,6 +49,15 @@ const processQueue = (error: any, token: string | null = null) => {
   failedQueue = [];
 };
 
+/** Avoid sync import of store (store → authSlice → api circular dependency). */
+async function clearSessionInRedux() {
+  const [{ store }, { clearAuth }] = await Promise.all([
+    import('../features/store'),
+    import('../features/auth/authSlice'),
+  ]);
+  store.dispatch(clearAuth());
+}
+
 // Response interceptor - handle 401 and refresh token
 api.interceptors.response.use(
   (response) => response,
@@ -82,41 +91,43 @@ api.interceptors.response.use(
     isRefreshing = true;
 
     try {
-      // Try to refresh using the stored refresh token
       const refreshToken = localStorage.getItem('refreshToken');
-      
+      if (!refreshToken) {
+        throw new Error('No refresh token');
+      }
+
       const response = await axios.post(
         `${API_BASE_URL}/auth/refresh`,
-        { refreshToken }, // Send as body too (backend accepts both)
+        { refreshToken },
         { withCredentials: true }
       );
 
-      const { accessToken, refreshToken: newRefreshToken } = response.data.data.tokens;
-      
-      // Save new tokens
+      const tokens = response.data?.data?.tokens;
+      const accessToken = tokens?.accessToken;
+      const newRefreshToken = tokens?.refreshToken;
+      if (!accessToken || typeof accessToken !== 'string') {
+        return Promise.reject(new Error('Refresh response missing access token'));
+      }
+
       localStorage.setItem('accessToken', accessToken);
       if (newRefreshToken) {
         localStorage.setItem('refreshToken', newRefreshToken);
       }
 
-      // Update the original request with new token
       originalRequest.headers.Authorization = `Bearer ${accessToken}`;
-      
+
       processQueue(null, accessToken);
-      
+
       return api(originalRequest);
     } catch (refreshError) {
       processQueue(refreshError, null);
-      
-      // Clear tokens and redirect to login
+
       localStorage.removeItem('accessToken');
       localStorage.removeItem('refreshToken');
-      
-      // Only redirect if we're not already on the login page
-      if (!window.location.pathname.includes('/login')) {
-        window.location.href = '/login';
-      }
-      
+      await clearSessionInRedux();
+
+      // Do not force /login: public pages (home, medicines) must work with expired tokens.
+      // ProtectedRoute redirects when isAuthenticated becomes false.
       return Promise.reject(refreshError);
     } finally {
       isRefreshing = false;

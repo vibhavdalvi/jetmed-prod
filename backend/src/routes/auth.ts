@@ -342,7 +342,11 @@ router.post(
         data: { tokens },
       });
     } catch (error) {
-      throw new UnauthorizedError('Invalid refresh token');
+      if (error instanceof UnauthorizedError) throw error;
+      if (error instanceof jwt.JsonWebTokenError || error instanceof jwt.TokenExpiredError) {
+        throw new UnauthorizedError('Invalid refresh token');
+      }
+      throw error;
     }
   })
 );
@@ -445,7 +449,7 @@ router.post(
  */
 router.post(
   '/2fa/validate',
-  body('userId').isUUID().withMessage('Invalid user ID'),
+  body('userId').isMongoId().withMessage('Invalid user ID'),
   body('token').isLength({ min: 6, max: 6 }).withMessage('Invalid token'),
   asyncHandler(async (req: Request, res: Response) => {
     const errors = validationResult(req);

@@ -201,8 +201,8 @@ router.put('/inventory/:id', ...warehouseAuth, [
 }));
 
 router.post('/inventory/add', ...warehouseAuth, [
-  body('medicineId').isUUID(),
-  body('warehouseId').isUUID(),
+body('medicineId').isMongoId(),
+    body('warehouseId').isMongoId(),
   body('dosageOptionId').notEmpty(),
   body('quantity').isInt({ min: 1 }),
   body('batchNumber').notEmpty(),

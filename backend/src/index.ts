@@ -22,7 +22,7 @@ import userRoutes from './routes/users.js';
 import medicineRoutes from './routes/medicines.js';
 import orderRoutes from './routes/orders.js';
 import prescriptionRoutes from './routes/prescriptions.js';
-import paymentRoutes from './routes/payments.js';
+import paymentRoutes, { stripeWebhookHandler } from './routes/payments.js';
 import pharmacistRoutes from './routes/pharmacist.js';
 import deliveryRoutes from './routes/delivery.js';
 import warehouseRoutes from './routes/warehouse.js';
@@ -74,6 +74,8 @@ setupSocketIO(io);
 // Make io accessible to routes
 app.set('io', io);
 
+const apiVersion = `/api/${config.app.apiVersion}`;
+
 // ==================== MIDDLEWARE ====================
 
 // Security headers
@@ -103,6 +105,23 @@ app.use(
   })
 );
 
+// Liveness (same payload as GET /health) — under apiVersion so SPA + same-origin proxies need only /api/*
+const sendLivenessHealth = (_req: Request, res: Response) => {
+  res.status(200).json({
+    success: true,
+    message: 'JetMed API is running',
+    timestamp: new Date().toISOString(),
+    version: config.app.apiVersion,
+    environment: config.app.env,
+    deployment: {
+      trustProxy: app.get('trust proxy'),
+      hint:
+        'If trustProxy is false but you deploy on Render, remove TRUST_PROXY=false from env or redeploy latest main.',
+    },
+  });
+};
+app.get(`${apiVersion}/health`, sendLivenessHealth);
+
 // Rate limiting (skip X-Forwarded-For strict check — we set trust proxy; keeps Render from 500 if detection lags)
 const limiter = rateLimit({
   windowMs: config.rateLimit.windowMs,
@@ -113,9 +132,13 @@ const limiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  validate: { xForwardedForHeader: false },
+  validate: { xForwardedForHeader: false, trustProxy: false },
+  skip: (req) => req.originalUrl.includes('/payments/webhook'),
 });
 app.use('/api', limiter);
+
+// Stripe webhooks require raw body — must run before express.json()
+app.post(`${apiVersion}/payments/webhook`, express.raw({ type: 'application/json' }), stripeWebhookHandler);
 
 // Body parsers
 app.use(express.json({ limit: '10mb' }));
@@ -138,8 +161,6 @@ if (config.app.env === 'development') {
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // ==================== API ROUTES ====================
-
-const apiVersion = `/api/${config.app.apiVersion}`;
 
 app.use(`${apiVersion}/auth`, authRoutes);
 app.use(`${apiVersion}/users`, userRoutes);
@@ -165,6 +186,7 @@ app.get('/', (_req: Request, res: Response) => {
     success: true,
     message: 'JetMed API',
     health: '/health',
+    apiHealth: `${apiVersion}/health`,
     readiness: '/health/ready',
     apiInfo: '/api',
     docs: '/api-docs',
@@ -173,20 +195,7 @@ app.get('/', (_req: Request, res: Response) => {
 });
 
 // Health check endpoint (not behind /api rate limit — use this to verify deployed code)
-app.get('/health', (_req: Request, res: Response) => {
-  res.status(200).json({
-    success: true,
-    message: 'JetMed API is running',
-    timestamp: new Date().toISOString(),
-    version: config.app.apiVersion,
-    environment: config.app.env,
-    deployment: {
-      trustProxy: app.get('trust proxy'),
-      hint:
-        'If trustProxy is false but you deploy on Render, remove TRUST_PROXY=false from env or redeploy latest main.',
-    },
-  });
-});
+app.get('/health', sendLivenessHealth);
 
 app.get('/health/ready', async (_req: Request, res: Response) => {
   const mongoOk = mongoose.connection.readyState === 1;

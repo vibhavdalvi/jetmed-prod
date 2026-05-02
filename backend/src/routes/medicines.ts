@@ -40,7 +40,8 @@ router.get(
     const filter: Record<string, unknown> = { isActive: true };
 
     if (category && category !== 'All Categories') {
-      filter.category = category;
+      const c = String(category).trim();
+      if (c) filter.category = c;
     }
 
     if (type) {
@@ -178,11 +179,32 @@ router.get(
     const cached = await cacheGet(cacheKey);
 
     if (cached) {
-      return res.json({ success: true, data: { categories: JSON.parse(cached) } });
+      try {
+        const parsed = JSON.parse(cached);
+        // Do not trust cached empty lists: DB may have been seeded after an earlier empty snapshot.
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const sorted = [...parsed].map((c) => String(c)).sort((a, b) => a.localeCompare(b));
+          return res.json({ success: true, data: { categories: sorted } });
+        }
+      } catch {
+        await cacheDelete(cacheKey);
+      }
     }
 
-    const categoryList = await Medicine.distinct('category', { isActive: true });
-    await cacheSet(cacheKey, JSON.stringify(categoryList), 3600);
+    const raw = await Medicine.distinct('category', { isActive: true });
+    const categoryList = [
+      ...new Set(
+        raw
+          .filter((c) => c != null && String(c).trim() !== '')
+          .map((c) => String(c).trim())
+      ),
+    ].sort((a, b) => a.localeCompare(b));
+
+    if (categoryList.length > 0) {
+      await cacheSet(cacheKey, JSON.stringify(categoryList), 3600);
+    } else {
+      await cacheDelete(cacheKey);
+    }
 
     res.json({ success: true, data: { categories: categoryList } });
   })

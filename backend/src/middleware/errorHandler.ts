@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import mongoose from 'mongoose';
 import { IApiResponse } from '../types/index.js';
 import config from '../config/index.js';
 
@@ -82,22 +83,26 @@ export const errorHandler = (
     statusCode = err.statusCode;
     message = err.message;
     errors = err.errors;
-  } else if (err.name === 'SequelizeValidationError') {
-    // Sequelize validation errors
+  } else if (err instanceof mongoose.Error.ValidationError) {
     statusCode = 422;
     message = 'Validation error';
-    errors = (err as any).errors?.map((e: any) => ({
+    errors = Object.values(err.errors).map((e) => ({
       field: e.path,
       message: e.message,
     }));
-  } else if (err.name === 'SequelizeUniqueConstraintError') {
-    // Sequelize unique constraint errors
+  } else if (err instanceof mongoose.Error.CastError) {
+    statusCode = 400;
+    message = 'Invalid ID or parameter format';
+  } else if ((err as NodeJS.ErrnoException & { code?: number }).code === 11000) {
     statusCode = 409;
     message = 'Resource already exists';
-    errors = (err as any).errors?.map((e: any) => ({
-      field: e.path,
-      message: e.message,
-    }));
+    const keyValue = (err as { keyValue?: Record<string, unknown> }).keyValue;
+    if (keyValue) {
+      errors = Object.entries(keyValue).map(([field]) => ({
+        field,
+        message: 'Duplicate value',
+      }));
+    }
   } else if (err.name === 'JsonWebTokenError') {
     statusCode = 401;
     message = 'Invalid token';
@@ -109,7 +114,7 @@ export const errorHandler = (
     message = (err as any).message || 'File upload error';
   }
 
-  const pgDetail =
+  const nestedDbDetail =
     (err as any).parent?.message ||
     (err as any).original?.message ||
     (err as any).sqlMessage;
@@ -124,7 +129,7 @@ export const errorHandler = (
     console.error('[API Error]', req.method, req.originalUrl, {
       name: err.name,
       message: err.message,
-      ...(pgDetail ? { pg: pgDetail } : {}),
+      ...(nestedDbDetail ? { detail: nestedDbDetail } : {}),
       stack: err.stack?.split('\n').slice(0, 8).join('\n'),
     });
   }
@@ -144,15 +149,21 @@ export const errorHandler = (
   // Temporary remote debugging: set EXPOSE_SERVER_ERRORS=true on Render, hit endpoint, then REMOVE (leaks SQL/details)
   if (process.env.EXPOSE_SERVER_ERRORS === 'true') {
     (response as any).debugMessage = err.message;
-    if (pgDetail) (response as any).pgDetail = String(pgDetail);
+    if (nestedDbDetail) (response as any).debugDetail = String(nestedDbDetail);
   }
 
   res.status(statusCode).json(response);
 };
 
-// Async handler wrapper to catch async errors
-export const asyncHandler = (fn: Function) => {
-  return (req: Request, res: Response, next: NextFunction) => {
+type AsyncRequestHandler = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => Promise<void | Response>;
+
+/** Wraps async route handlers so rejected promises reach `errorHandler`. */
+export const asyncHandler = (fn: AsyncRequestHandler) => {
+  return (req: Request, res: Response, next: NextFunction): void => {
     Promise.resolve(fn(req, res, next)).catch(next);
   };
 };

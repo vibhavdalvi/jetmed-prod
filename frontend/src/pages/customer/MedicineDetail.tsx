@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, createSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   ShoppingCartIcon,
@@ -174,7 +174,12 @@ export default function MedicineDetail() {
           <span className="text-gray-400">/</span>
           <Link to="/medicines" className="text-gray-500 hover:text-primary-600">Medicines</Link>
           <span className="text-gray-400">/</span>
-          <Link to={`/medicines?category=${medicine.category}`} className="text-gray-500 hover:text-primary-600">{medicine.category}</Link>
+          <Link
+            to={{ pathname: '/medicines', search: createSearchParams({ category: medicine.category }).toString() }}
+            className="text-gray-500 hover:text-primary-600"
+          >
+            {medicine.category}
+          </Link>
           <span className="text-gray-400">/</span>
           <span className="text-gray-900 dark:text-white">{medicine.name}</span>
         </nav>

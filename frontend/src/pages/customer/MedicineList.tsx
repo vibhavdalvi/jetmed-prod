@@ -94,8 +94,65 @@ export default function MedicineList() {
   }, [showFilters, selectedCategory, prescriptionFilter]);
 
   useEffect(() => {
-    fetchMedicines();
-  }, [currentPage, selectedCategory, selectedSort, prescriptionFilter, searchParams]);
+    let cancelled = false;
+
+    const loadMedicines = async () => {
+      setLoading(true);
+      setActionError('');
+      if (isProductionMissingRemoteApi()) {
+        setActionError(
+          'API base URL missing: set VITE_API_URL in Vercel (Production) to https://your-api.onrender.com/api/v1 and redeploy.'
+        );
+        setLoading(false);
+        return;
+      }
+
+      const pageRaw = searchParams.get('page') || '1';
+      const pageNum = Math.max(1, parseInt(pageRaw, 10) || 1);
+      const search = searchParams.get('search') || '';
+      const category = searchParams.get('category') || 'All Categories';
+      const sort = searchParams.get('sort') || 'relevance';
+      const rx = searchParams.get('rx') || 'all';
+
+      const params = new URLSearchParams();
+      params.set('page', String(pageNum));
+      params.set('limit', String(limit));
+      if (search) params.set('search', search);
+      if (category !== 'All Categories') params.set('category', category);
+      if (sort !== 'relevance') params.set('sort', sort);
+      if (rx !== 'all') params.set('prescriptionRequirement', rx);
+
+      try {
+        const response = await api.get(`/medicines?${params.toString()}`);
+        if (cancelled) return;
+        setMedicines(response.data.data?.medicines || []);
+        setTotalCount(response.data.data?.total || 0);
+      } catch (error) {
+        if (cancelled) return;
+        console.error('Failed to fetch medicines:', error);
+        if (axios.isAxiosError(error)) {
+          if (error.message === 'Network Error') {
+            setActionError(
+              'Cannot reach API (often CORS or wrong URL). Confirm VITE_API_URL on Vercel and FRONTEND_URL on Render = this site\'s URL, then redeploy both.'
+            );
+          } else if (error.response?.data?.message) {
+            setActionError(String(error.response.data.message));
+          } else {
+            setActionError('Unable to load medicines right now. Please refresh or try again shortly.');
+          }
+        } else {
+          setActionError('Unable to load medicines right now. Please refresh or try again shortly.');
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    loadMedicines();
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, limit]);
 
   useEffect(() => {
     fetchCategories();
@@ -108,51 +165,6 @@ export default function MedicineList() {
       setCategories(['All Categories', ...fetchedCategories]);
     } catch (error) {
       console.error('Failed to fetch medicine categories:', error);
-    }
-  };
-
-  const fetchMedicines = async () => {
-    setLoading(true);
-    setActionError('');
-    if (isProductionMissingRemoteApi()) {
-      setActionError(
-        'API base URL missing: set VITE_API_URL in Vercel (Production) to https://your-api.onrender.com/api/v1 and redeploy.'
-      );
-      setLoading(false);
-      return;
-    }
-    try {
-      const params = new URLSearchParams();
-      params.set('page', currentPage.toString());
-      params.set('limit', limit.toString());
-      
-      if (searchQuery) params.set('search', searchQuery);
-      if (selectedCategory !== 'All Categories') params.set('category', selectedCategory);
-      if (selectedSort !== 'relevance') params.set('sort', selectedSort);
-      if (prescriptionFilter !== 'all') params.set('prescriptionRequirement', prescriptionFilter);
-
-      const response = await api.get(`/medicines?${params.toString()}`);
-      setMedicines(response.data.data?.medicines || []);
-      setTotalCount(response.data.data?.total || 0);
-    } catch (error) {
-      console.error('Failed to fetch medicines:', error);
-      if (axios.isAxiosError(error)) {
-        if (error.message === 'Network Error') {
-          setActionError(
-            'Cannot reach API (often CORS or wrong URL). Confirm VITE_API_URL on Vercel and FRONTEND_URL on Render = this site\'s URL, then redeploy both.'
-          );
-        } else if (error.response?.data?.message) {
-          setActionError(String(error.response.data.message));
-        } else {
-          setActionError(
-            'Unable to load medicines right now. Please refresh or try again shortly.'
-          );
-        }
-      } else {
-        setActionError('Unable to load medicines right now. Please refresh or try again shortly.');
-      }
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -652,10 +664,22 @@ export default function MedicineList() {
                 </button>
                 <button 
                   onClick={() => {
+                    const params = new URLSearchParams(searchParams);
+                    if (!mobileCategory || mobileCategory === 'All Categories') {
+                      params.delete('category');
+                    } else {
+                      params.set('category', mobileCategory);
+                    }
+                    if (!mobilePrescriptionFilter || mobilePrescriptionFilter === 'all') {
+                      params.delete('rx');
+                    } else {
+                      params.set('rx', mobilePrescriptionFilter);
+                    }
+                    params.set('page', '1');
                     setSelectedCategory(mobileCategory);
                     setPrescriptionFilter(mobilePrescriptionFilter);
-                    updateQueryParam('category', mobileCategory, 'All Categories');
-                    updateQueryParam('rx', mobilePrescriptionFilter, 'all');
+                    setCurrentPage(1);
+                    setSearchParams(params);
                     setShowFilters(false);
                   }} 
                   className="flex-1 px-4 py-2 bg-primary-600 text-white rounded-lg"

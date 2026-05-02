@@ -4,55 +4,80 @@ import config from './index.js';
 type RedisCli = ReturnType<typeof createClient>;
 let redisClient: RedisCli | undefined;
 
+const REDIS_CONNECT_RETRIES = Number(process.env.REDIS_CONNECT_RETRIES || '15');
+const REDIS_CONNECT_DELAY_MS = Number(process.env.REDIS_CONNECT_DELAY_MS || '1000');
+
 /** True when REDIS_HOST is set (we attempt a connection). */
 export const isRedisConfigured = (): boolean => Boolean(config.redis.host);
 
 export const connectRedis = async (): Promise<void> => {
   if (!config.redis.host) {
-    // Optional service: no startup attempt, no log noise (set REDIS_VERBOSE=true to log skip)
     if (process.env.REDIS_VERBOSE === 'true') {
-      console.log('Redis skipped (not configured).');
+      console.log('Redis skipped (REDIS_DISABLED or no host in production).');
     }
     return;
   }
 
-  let client: RedisCli | undefined;
-  try {
-    client = createClient({
-      socket: {
-        host: config.redis.host,
-        port: config.redis.port,
-        reconnectStrategy: (retries: number) => {
-          if (retries > 8) return false;
-          return Math.min(retries * 150, 3000);
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= REDIS_CONNECT_RETRIES; attempt++) {
+    let client: RedisCli | undefined;
+    try {
+      client = createClient({
+        socket: {
+          host: config.redis.host,
+          port: config.redis.port,
+          reconnectStrategy: (retries: number) => {
+            if (retries > 10) return false;
+            return Math.min(retries * 200, 4000);
+          },
         },
-      },
-      password: config.redis.password,
-    });
+        password: config.redis.password,
+      });
 
-    client.on('error', (err: Error) => {
-      if (process.env.REDIS_VERBOSE === 'true') {
-        console.error('Redis Client Error:', err.message);
-      }
-    });
+      client.on('error', (err: Error) => {
+        if (process.env.REDIS_VERBOSE === 'true') {
+          console.error('Redis client error:', err.message);
+        }
+      });
 
-    await client.connect();
-    redisClient = client;
-    console.log('✅ Redis connected successfully');
-  } catch (error: unknown) {
-    if (client) {
-      try {
-        await client.quit();
-      } catch {
-        /* ignore */
+      await client.connect();
+      redisClient = client;
+      console.log(
+        `✅ Redis connected (${config.redis.host}:${config.redis.port}) — refresh tokens & login lockout cache active`
+      );
+      return;
+    } catch (error) {
+      lastError = error;
+      if (client) {
+        try {
+          await client.quit();
+        } catch {
+          /* ignore */
+        }
       }
-    }
-    redisClient = undefined;
-    if (process.env.REDIS_VERBOSE === 'true') {
+      redisClient = undefined;
+
       const msg = error instanceof Error ? error.message : String(error);
-      console.warn(`Redis unavailable (${msg}); continuing without cache`);
+      const hint =
+        process.env.NODE_ENV !== 'production'
+          ? ' Start Redis: brew services start redis   or   docker run -p 6379:6379 redis:7-alpine'
+          : ' Set REDIS_URL or REDIS_HOST to your managed Redis hostname.';
+
+      if (attempt < REDIS_CONNECT_RETRIES) {
+        console.warn(
+          `⏳ Redis connect attempt ${attempt}/${REDIS_CONNECT_RETRIES} failed (${msg}). Retrying in ${REDIS_CONNECT_DELAY_MS}ms…${hint}`
+        );
+        await new Promise((r) => setTimeout(r, REDIS_CONNECT_DELAY_MS));
+      }
     }
   }
+
+  const finalMsg = lastError instanceof Error ? lastError.message : String(lastError);
+  console.warn(
+    `\n⚠️  Redis unavailable after ${REDIS_CONNECT_RETRIES} attempts (${finalMsg}). API runs without cache:` +
+      ' refresh-token rotation and login lockout counters may not behave as intended.\n'
+  );
 };
 
 export const getRedisClient = (): RedisCli | undefined => redisClient;

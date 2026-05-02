@@ -54,14 +54,28 @@ const config = {
     uri: resolveMongoUri(),
   },
 
-  // Redis (optional — omit REDIS_HOST in production, or set REDIS_DISABLED=true)
+  // Redis — REDIS_URL wins over REDIS_HOST / REDIS_PORT / REDIS_PASSWORD
   redis: (() => {
+    if (process.env.REDIS_DISABLED === 'true') {
+      return { host: '', port: 6379, password: undefined as string | undefined };
+    }
+
+    const urlRaw = process.env.REDIS_URL?.trim();
+    if (urlRaw && /^rediss?:\/\//i.test(urlRaw)) {
+      try {
+        const u = new URL(urlRaw);
+        const password = u.password ? decodeURIComponent(u.password) : undefined;
+        const host = u.hostname || 'localhost';
+        const port = u.port ? parseInt(u.port, 10) : 6379;
+        return { host, port, password };
+      } catch {
+        /* fall through to host/port */
+      }
+    }
+
     const env = process.env.NODE_ENV || 'development';
     let host = process.env.REDIS_HOST?.trim() || '';
-    if (process.env.REDIS_DISABLED === 'true') {
-      host = '';
-    } else if (env === 'production') {
-      // Container localhost is never a real Redis on Railway — skip connect, no log spam
+    if (env === 'production') {
       if (!host || host === 'localhost' || host === '127.0.0.1') {
         host = '';
       }
@@ -71,7 +85,7 @@ const config = {
     return {
       host,
       port: parseInt(process.env.REDIS_PORT || '6379', 10),
-      password: process.env.REDIS_PASSWORD || undefined,
+      password: process.env.REDIS_PASSWORD?.trim() || undefined,
     };
   })(),
 
