@@ -180,9 +180,9 @@ router.put('/me/password', authenticate, [
  * @route   GET /api/v1/users/me/addresses
  */
 router.get('/me/addresses', authenticate, asyncHandler(async (req: Request, res: Response) => {
-  const addresses = await Address.find({ userId: req.user!.userId })
-    .sort({ isDefault: -1, createdAt: -1 })
-    .lean();
+  const docs = await Address.find({ userId: req.user!.userId }).sort({ isDefault: -1, createdAt: -1 });
+  // Use toJSON() so each address includes `id` (lean() skips schema transforms and only returns _id).
+  const addresses = docs.map((d) => d.toJSON());
   res.json({ success: true, data: { addresses } });
 }));
 

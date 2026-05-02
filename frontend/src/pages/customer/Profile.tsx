@@ -161,16 +161,18 @@ export default function Profile() {
           gender: profile.gender || 'prefer_not_to_say',
           avatar: profile.avatar || '',
         });
-        setAddresses((addressResponse.data.data?.addresses || []).map((addr: any) => ({
-          id: addr.id,
-          label: addr.label,
-          street: addr.streetAddress,
-          apartment: addr.apartment,
-          city: addr.city,
-          state: addr.state,
-          zipCode: addr.zipCode,
-          isDefault: addr.isDefault,
-        })));
+        setAddresses(
+          (addressResponse.data.data?.addresses || []).map((addr: any) => ({
+            id: addr.id != null ? String(addr.id) : addr._id != null ? String(addr._id) : '',
+            label: addr.label,
+            street: addr.streetAddress,
+            apartment: addr.apartment,
+            city: addr.city,
+            state: addr.state,
+            zipCode: addr.zipCode,
+            isDefault: Boolean(addr.isDefault),
+          })).filter((a: Address) => a.id)
+        );
         setMedicalInfo({
           allergies: medical?.allergies || [],
           chronicConditions: medical?.chronicConditions || [],

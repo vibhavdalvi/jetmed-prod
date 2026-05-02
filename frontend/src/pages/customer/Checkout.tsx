@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   MapPinIcon,
@@ -61,8 +61,31 @@ const paymentOptions = [
   { id: 'paypal', label: 'PayPal', description: 'Temporarily disabled in this demo build', enabled: false },
 ] as const;
 
+function normalizeAddressRows(rows: any[]): Address[] {
+  const mapped = (rows || []).map((addr: any) => {
+    const id = addr?.id != null ? String(addr.id) : addr?._id != null ? String(addr._id) : '';
+    return {
+      id,
+      label: addr.label ?? '',
+      street: addr.streetAddress ?? addr.street ?? '',
+      apartment: addr.apartment,
+      city: addr.city ?? '',
+      state: addr.state ?? '',
+      zipCode: addr.zipCode ?? '',
+      isDefault: Boolean(addr.isDefault),
+    };
+  });
+  const seen = new Set<string>();
+  return mapped.filter((a) => {
+    if (!a.id || seen.has(a.id)) return false;
+    seen.add(a.id);
+    return true;
+  });
+}
+
 export default function Checkout() {
   const navigate = useNavigate();
+  const location = useLocation();
   const dispatch = useAppDispatch();
   const { user } = useAppSelector((state) => state.auth);
   const cartItems = useAppSelector((state) => state.cart.items) as unknown as CartItem[];
@@ -99,19 +122,13 @@ export default function Checkout() {
           api.get('/users/me/addresses'),
           api.get('/payments/wallet'),
         ]);
-        const loaded = (addressResponse.data.data?.addresses || []).map((addr: any) => ({
-          id: addr.id,
-          label: addr.label,
-          street: addr.streetAddress,
-          apartment: addr.apartment,
-          city: addr.city,
-          state: addr.state,
-          zipCode: addr.zipCode,
-          isDefault: addr.isDefault,
-        }));
+        const loaded = normalizeAddressRows(addressResponse.data.data?.addresses || []);
         setAddresses(loaded);
-        const defaultAddress = loaded.find((a: Address) => a.isDefault) || loaded[0];
-        setSelectedAddressId(defaultAddress?.id || '');
+        setSelectedAddressId((prev) => {
+          if (prev && loaded.some((a) => a.id === prev)) return prev;
+          const defaultAddress = loaded.find((a) => a.isDefault) || loaded[0];
+          return defaultAddress?.id || '';
+        });
         setWalletBalance(Number(walletResponse.data?.data?.wallet?.balance || 0));
       } catch (error) {
         console.error('Failed to load addresses:', error);
@@ -119,7 +136,7 @@ export default function Checkout() {
       }
     };
     loadAddresses();
-  }, []);
+  }, [location.key]);
 
   // Calculate totals
   const subtotal = cartItems.reduce((sum, item) => sum + item.dosageOption.price * item.quantity, 0);
@@ -396,7 +413,7 @@ export default function Checkout() {
                         <div className="flex items-start">
                           <input
                             type="radio"
-                            name="address"
+                            name="checkout-delivery-address"
                             value={address.id}
                             checked={selectedAddressId === address.id}
                             onChange={() => setSelectedAddressId(address.id)}
