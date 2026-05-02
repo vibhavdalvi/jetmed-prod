@@ -1,0 +1,37 @@
+{
+  "name": "jetmed",
+  "version": "1.0.0",
+  "description": "JetMed - Medicine at the speed of need. After-hours prescription delivery platform.",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && npm run dev",
+    "build": "npm run build:frontend && npm run build:backend",
+    "build:frontend": "cd frontend && npm run build",
+    "build:backend": "cd backend && npm run build",
+    "smoke:test": "node ./scripts/smoke-test.mjs",
+    "start": "cd backend && npm run start",
+    "seed": "cd backend && npm run seed",
+    "lint": "npm run lint:frontend && npm run lint:backend",
+    "lint:frontend": "cd frontend && npm run lint",
+    "lint:backend": "cd backend && npm run lint"
+  },
+  "keywords": [
+    "pharmacy",
+    "medicine",
+    "delivery",
+    "prescription",
+    "healthcare",
+    "telemedicine"
+  ],
+  "author": "JetMed Team",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

@@ -1,0 +1,142 @@
+================================================================================
+JETMED DEPLOY — DO IN ORDER (frontend first, then backend)
+================================================================================
+
+PART C — BACKEND ON RENDER (Docker)
+------------------------------------
+Use this when hosting the API on https://render.com instead of Railway.
+
+1. Sign up at Render → New → Web Service → Connect the same GitHub repo.
+
+2. Docker settings (IMPORTANT — monorepo):
+   - Dockerfile path:     backend/Dockerfile
+   - Docker build context: backend
+     (If context is the repo root, the image will copy the wrong package.json and
+     the build will fail or produce a broken app.)
+
+   Alternative: set the service "Root Directory" to backend, then use
+   Dockerfile path: Dockerfile  and context defaults to that root.
+
+3. Instance type: pick paid if you need always-on; free Web Services spin down
+   after idle (slow first request).
+
+4. Environment → Environment Variables:
+   - Do NOT set PORT yourself — Render injects PORT; the app reads process.env.PORT.
+   - NODE_ENV = production
+   - DATABASE_URL = from Render Postgres (create PostgreSQL in same dashboard,
+     copy "Internal Database URL" or external URL into this variable).
+   - APP_URL = https://YOUR-SERVICE.onrender.com  (no trailing slash)
+   - FRONTEND_URL = your Vercel/Netlify site URL, exact: https://xxx.vercel.app
+     (no trailing slash, must match the browser address or login CORS fails).
+   - Optional: FRONTEND_URLS = comma-separated extra origins (e.g. Vercel preview:
+     https://xxx-git-main-yourteam.vercel.app) — no spaces after commas.
+   - Trust proxy: defaults to ON for Render/Railway (express-rate-limit / X-Forwarded-For).
+     Set TRUST_PROXY=false only in exceptional cases.
+   - Optional: CORS_ALLOW_VERCEL_PREVIEWS=true allows any https://*.vercel.app (preview URLs)
+     without listing each in FRONTEND_URLS.
+   - Copy the rest from backend/.env (JWT_*, optional Redis/Mongo, etc.)
+   - Optional services: omit REDIS_HOST / MONGODB_URI if unused (see PART B notes).
+
+5. Health check (optional but recommended):
+   - Health Check Path: /health
+
+6. Deploy, wait for build + live. Copy the service URL (e.g. *.onrender.com).
+
+7. Update Vercel (or Netlify) VITE_API_URL and VITE_SOCKET_URL to the Render URL;
+   redeploy the frontend.
+
+================================================================================
+
+PART A — FRONTEND (VERCEL)
+--------------------------
+1. Push this repo to GitHub if it is not there yet.
+
+2. Open https://vercel.com → Sign up with GitHub → Add New → Project.
+
+3. Import your JetMed repository.
+
+4. IMPORTANT: Set "Root Directory" to:  frontend
+   (Click Edit next to Root Directory, choose "frontend", Continue.)
+
+5. Framework: Vite (auto). Build: npm run build. Output: dist.
+
+6. Environment Variables (same names as frontend/env.vercel.example):
+   - VITE_API_URL = https://YOUR-BACKEND-URL/api/v1
+   - VITE_SOCKET_URL = https://YOUR-BACKEND-URL
+   - VITE_GOOGLE_MAPS_API_KEY = (your key)
+   - VITE_STRIPE_PUBLISHABLE_KEY = (your key)
+   - VITE_AGORA_APP_ID = (your id)
+   For the first deploy you can use a placeholder API URL; you MUST update
+   VITE_* after the backend is live and Redeploy.
+
+7. Click Deploy. Save the site URL (e.g. https://xxx.vercel.app).
+
+PART B — BACKEND (RAILWAY OR RENDER — example: Docker)
+-------------------------------------------------------
+8. Create account on Railway (railway.app) or Render (render.com).
+
+9. New Project → Deploy from GitHub → same repo.
+
+10. Set the service to use Docker:
+    - Dockerfile path: backend/Dockerfile
+    - Root / context: repository root, OR set build context to "backend"
+    (Railway: add service → Dockerfile, point to backend/Dockerfile)
+
+11. Set environment variables (copy from your local backend/.env), including:
+    - PORT = 5000 (or platform default; many set PORT automatically)
+    - NODE_ENV = production
+    - APP_URL = https://YOUR-BACKEND-PUBLIC-URL  (no trailing slash)
+    - FRONTEND_URL = https://YOUR-VERCEL-SITE.vercel.app
+    - PostgreSQL (Railway): prefer one variable — DATABASE_URL referenced from the
+      Postgres service (Variables → New → Database → DATABASE_URL). The API uses
+      DATABASE_URL when set; only use POSTGRES_* if you are not using DATABASE_URL.
+    - Redis: optional. Omit REDIS_HOST or set REDIS_DISABLED=true. Production treats
+      localhost/127.0.0.1 as unset. REDIS_VERBOSE=true enables Redis skip/error logs.
+    - MongoDB: optional (activity audit logs). Omit MONGODB_URI or MONGODB_DISABLED=true.
+      Production treats localhost/127.0.0.1-only URIs as unset. MONGODB_VERBOSE=true
+      enables skip/connection logs.
+    - JWT_* / etc. (same as .env)
+
+12. Add managed PostgreSQL (and Redis/Mongo if you use them) on the platform,
+    or use external Atlas/Neon URLs in env.
+
+13. Deploy. Copy the public HTTPS URL of the API.
+
+14. Go back to Vercel → your project → Settings → Environment Variables:
+    Update VITE_API_URL and VITE_SOCKET_URL to match the real backend URL.
+    Trigger Redeploy.
+
+FIRST DATABASE SETUP (Render Postgres empty — common cause of /medicines 500)
+------------------------------
+Production does NOT auto-sync Sequelize schema (only development does). Fresh Postgres
+has no tables until you run migrate/seed from your machine:
+
+  cd backend
+  export DATABASE_URL='postgresql://...'   # Render Postgres → External URL
+  npm install && npx tsx src/config/migrate.ts    # create tables (safe, alter only)
+
+Then seed demo data (ONLY on an empty throwaway DB — seed uses sync force):
+
+  npx tsx src/seeds/index.ts
+
+Or run migrate then seed as needed. Free Render has no Shell; use your laptop terminal.
+
+Debugging 500s without Shell: set EXPOSE_SERVER_ERRORS=true on the API service, redeploy, hit the
+failing URL — JSON will include debugMessage (then delete the variable).
+
+NOTES
+-----
+- Prescription file uploads need a persistent disk or S3 on production;
+  default Docker disk may lose files on restart.
+- CORS uses FRONTEND_URL; it must match your Vercel URL exactly.
+
+Firebase (Railway / single-line env):
+  FIREBASE_PRIVATE_KEY — Paste the JSON value's private_key string as ONE line with
+  literal \n where line breaks were (same as Firebase downloads). Do not paste only
+  the middle lines without -----BEGIN PRIVATE KEY----- / -----END PRIVATE KEY-----.
+
+SendGrid:
+  SENDGRID_API_KEY — Must be a real API secret starting with SG. from SendGrid.
+  Until then, omit it or leave unset; email features stay off without crashing.
+
+================================================================================
