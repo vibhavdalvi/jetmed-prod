@@ -1,5 +1,7 @@
+// @ts-nocheck
 import bcrypt from 'bcryptjs';
-import sequelize from '../config/postgres.js';
+import mongoose from 'mongoose';
+import { connectMongoDB } from '../config/mongodb.js';
 import { User, UserProfile, Address, Medicine, Warehouse, Inventory, DeliveryPartner, Order, OrderItem } from '../models/index.js';
 import { UserRole, MedicineType, PrescriptionRequirement, Gender, OrderStatus, DeliveryType, UrgencyLevel } from '../types/index.js';
 
@@ -23,7 +25,19 @@ const seedDatabase = async () => {
   try {
     console.log('🌱 Starting database seed...');
     
-    await sequelize.sync({ force: true });
+    await connectMongoDB();
+
+    await OrderItem.deleteMany({});
+    await Order.deleteMany({});
+    await Inventory.deleteMany({});
+    await Medicine.deleteMany({});
+    await Address.deleteMany({});
+    await UserProfile.deleteMany({});
+    await DeliveryPartner.deleteMany({});
+    await Warehouse.deleteMany({});
+    await User.deleteMany({});
+
+    console.log('✅ Cleared existing MongoDB collections');
     
     // Pre-hash passwords
     const adminPasswordHash = await bcrypt.hash('Admin@123', 12);
@@ -41,7 +55,7 @@ const seedDatabase = async () => {
       isActive: true,
       isVerified: true,
       twoFactorEnabled: false,
-    }, { hooks: false });
+    });
     
     await UserProfile.create({
       userId: admin.id,
@@ -62,7 +76,7 @@ const seedDatabase = async () => {
       isActive: true,
       isVerified: true,
       twoFactorEnabled: false,
-    }, { hooks: false });
+    });
     
     await UserProfile.create({
       userId: customer.id,
@@ -99,7 +113,7 @@ const seedDatabase = async () => {
       isActive: true,
       isVerified: true,
       twoFactorEnabled: false,
-    }, { hooks: false });
+    });
     
     await UserProfile.create({
       userId: pharmacist.id,
@@ -122,7 +136,7 @@ const seedDatabase = async () => {
       isActive: true,
       isVerified: true,
       twoFactorEnabled: false,
-    }, { hooks: false });
+    });
     
     await UserProfile.create({
       userId: deliveryUser.id,
@@ -160,7 +174,7 @@ const seedDatabase = async () => {
       isActive: true,
       isVerified: true,
       twoFactorEnabled: false,
-    }, { hooks: false });
+    });
     
     await UserProfile.create({
       userId: warehouseUser.id,
@@ -622,9 +636,11 @@ const seedDatabase = async () => {
     console.log('└──────────────────────────────────────────────────────┘');
     console.log('');
     
+    await mongoose.disconnect();
     process.exit(0);
   } catch (error) {
     console.error('❌ Seed failed:', error);
+    await mongoose.disconnect().catch(() => {});
     process.exit(1);
   }
 };

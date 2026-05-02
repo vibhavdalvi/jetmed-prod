@@ -9,26 +9,14 @@ const __dirname = path.dirname(__filename);
 // Load environment variables
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 
-/** Production: treat localhost-only URIs as unset (no accidental connects inside Railway). */
+/** MERN: MongoDB is the primary data store. Default local DB for development. */
 function resolveMongoUri(): string {
-  const env = process.env.NODE_ENV || 'development';
   if (process.env.MONGODB_DISABLED === 'true') {
     return '';
   }
-
-  let uri =
-    process.env.MONGODB_URI?.trim() ||
-    (env !== 'production' ? 'mongodb://127.0.0.1:27017/jetmed_logs' : '');
-
-  if (!uri || env !== 'production') {
-    return uri;
-  }
-
-  const localUri =
-    /mongodb(\+srv)?:\/\/(?:[^\s@]*@)?127\.0\.0\.1\b/.test(uri) ||
-    /mongodb(\+srv)?:\/\/(?:[^\s@]*@)?localhost\b/.test(uri);
-
-  return localUri ? '' : uri;
+  return (
+    process.env.MONGODB_URI?.trim() || 'mongodb://127.0.0.1:27017/jetmed'
+  );
 }
 
 const config = {
@@ -61,25 +49,7 @@ const config = {
     timeoutMinutes: parseInt(process.env.SESSION_TIMEOUT_MINUTES || '30', 10),
   },
 
-  // PostgreSQL — prefer DATABASE_URL on Railway/Heroku (single reference from Postgres plugin)
-  postgres: {
-    databaseUrl: (process.env.DATABASE_URL || '').trim(),
-    host: process.env.POSTGRES_HOST || 'localhost',
-    port: parseInt(process.env.POSTGRES_PORT || '5432', 10),
-    database: process.env.POSTGRES_DB || 'jetmed',
-    username: process.env.POSTGRES_USER || 'postgres',
-    password: process.env.POSTGRES_PASSWORD || '',
-    dialect: 'postgres' as const,
-    logging: process.env.NODE_ENV === 'development' ? console.log : false,
-    pool: {
-      max: 10,
-      min: 0,
-      acquire: 30000,
-      idle: 10000,
-    },
-  },
-
-  // MongoDB (optional — activity audit logs; MONGODB_VERBOSE for logs; MONGODB_DISABLED=true to skip)
+  // MongoDB (MERN — required unless MONGODB_DISABLED=true for special tests)
   mongodb: {
     uri: resolveMongoUri(),
   },

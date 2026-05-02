@@ -1,104 +1,30 @@
-import { DataTypes, Model, Optional } from 'sequelize';
-import sequelize from '../config/postgres.js';
-import { IUserMedicalInfo } from '../types/index.js';
+import mongoose, { Schema, type Model } from 'mongoose';
+import { addApiJson, uuidId } from '../utils/mongoSchema.js';
 
-interface UserMedicalInfoCreationAttributes extends Optional<IUserMedicalInfo, 'id' | 'createdAt' | 'updatedAt' | 'allergies' | 'currentMedications' | 'chronicConditions' | 'bloodType' | 'emergencyContactName' | 'emergencyContactPhone' | 'insuranceProvider' | 'insurancePolicyNumber' | 'insuranceCardImage' | 'governmentIdImage'> {}
-
-class UserMedicalInfo extends Model<IUserMedicalInfo, UserMedicalInfoCreationAttributes> implements IUserMedicalInfo {
-  declare id: string;
-  declare userId: string;
-  declare allergies: string[];
-  declare currentMedications: string[];
-  declare chronicConditions: string[];
-  declare bloodType?: string;
-  declare emergencyContactName?: string;
-  declare emergencyContactPhone?: string;
-  declare insuranceProvider?: string;
-  declare insurancePolicyNumber?: string;
-  declare insuranceCardImage?: string;
-  declare governmentIdImage?: string;
-  declare createdAt: Date;
-  declare updatedAt: Date;
-}
-
-UserMedicalInfo.init(
+const userMedicalInfoSchema = new Schema(
   {
-    id: {
-      type: DataTypes.UUID,
-      defaultValue: DataTypes.UUIDV4,
-      primaryKey: true,
-    },
-    userId: {
-      type: DataTypes.UUID,
-      allowNull: false,
-      unique: true,
-      references: {
-        model: 'users',
-        key: 'id',
-      },
-      onDelete: 'CASCADE',
-    },
-    allergies: {
-      type: DataTypes.ARRAY(DataTypes.STRING),
-      defaultValue: [],
-    },
-    currentMedications: {
-      type: DataTypes.ARRAY(DataTypes.STRING),
-      defaultValue: [],
-    },
-    chronicConditions: {
-      type: DataTypes.ARRAY(DataTypes.STRING),
-      defaultValue: [],
-    },
+    _id: { ...uuidId },
+    userId: { type: String, required: true, unique: true, index: true },
+    allergies: { type: [String], default: [] },
+    currentMedications: { type: [String], default: [] },
+    chronicConditions: { type: [String], default: [] },
     bloodType: {
-      type: DataTypes.STRING(10),
-      allowNull: true,
-      validate: {
-        isIn: [['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']],
-      },
+      type: String,
+      enum: ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'],
     },
-    emergencyContactName: {
-      type: DataTypes.STRING(200),
-      allowNull: true,
-    },
-    emergencyContactPhone: {
-      type: DataTypes.STRING(20),
-      allowNull: true,
-    },
-    insuranceProvider: {
-      type: DataTypes.STRING(200),
-      allowNull: true,
-    },
-    insurancePolicyNumber: {
-      type: DataTypes.STRING(100),
-      allowNull: true,
-    },
-    insuranceCardImage: {
-      type: DataTypes.STRING(500),
-      allowNull: true,
-    },
-    governmentIdImage: {
-      type: DataTypes.STRING(500),
-      allowNull: true,
-    },
-    createdAt: {
-      type: DataTypes.DATE,
-      defaultValue: DataTypes.NOW,
-    },
-    updatedAt: {
-      type: DataTypes.DATE,
-      defaultValue: DataTypes.NOW,
-    },
+    emergencyContactName: String,
+    emergencyContactPhone: String,
+    insuranceProvider: String,
+    insurancePolicyNumber: String,
+    insuranceCardImage: String,
+    governmentIdImage: String,
   },
-  {
-    sequelize,
-    tableName: 'user_medical_info',
-    underscored: false,
-    timestamps: true,
-    indexes: [
-      { fields: ['userId'], unique: true },
-    ],
-  }
+  { timestamps: true }
 );
 
+addApiJson(userMedicalInfoSchema);
+
+const UserMedicalInfo =
+  (mongoose.models.UserMedicalInfo as Model<unknown>) ||
+  mongoose.model('UserMedicalInfo', userMedicalInfoSchema);
 export default UserMedicalInfo;

@@ -127,10 +127,11 @@ router.post(
       }
 
       // Update user phone
-      await User.update(
-        { phone },
-        { where: { id: userId } }
-      );
+      const user = await User.findById(userId);
+      if (user) {
+        user.phone = phone;
+        await user.save();
+      }
 
       return res.json({
         success: true,

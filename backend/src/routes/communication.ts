@@ -3,7 +3,7 @@ import { Router, Request, Response } from 'express';
 import { body, validationResult } from 'express-validator';
 import pkg from 'agora-access-token';
 
-import { Order, User, UserProfile } from '../models/index.js';
+import { Order } from '../models/index.js';
 import { asyncHandler, BadRequestError, NotFoundError, ForbiddenError } from '../middleware/errorHandler.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 import config from '../config/index.js';
@@ -70,9 +70,7 @@ router.post('/call/initiate', authenticate, authorize(UserRole.PHARMACIST, UserR
 
   const { orderId, type } = req.body;
 
-  const order = await Order.findByPk(orderId, {
-    include: [{ model: User, as: 'user' }],
-  });
+  const order = await Order.findById(orderId).populate({ path: 'user' });
   if (!order) throw new NotFoundError('Order not found');
 
   const channelName = `order-${orderId}`;
@@ -152,7 +150,7 @@ router.post('/call/end', authenticate, [
   // Extract order ID from channel name
   const orderId = channelName.replace('order-', '');
 
-  const order = await Order.findByPk(orderId);
+  const order = await Order.findById(orderId);
   if (order) {
     // Log call details
     const callLog = {
@@ -165,9 +163,8 @@ router.post('/call/end', authenticate, [
 
     // Update order with call log (assuming we have a callLogs field)
     const existingLogs = order.callLogs || [];
-    await order.update({
-      callLogs: [...existingLogs, callLog],
-    });
+    order.callLogs = [...existingLogs, callLog];
+    await order.save();
   }
 
   // Notify all participants
@@ -193,7 +190,7 @@ router.post('/chat/send', authenticate, [
 
   const { orderId, message, type = 'text', attachmentUrl } = req.body;
 
-  const order = await Order.findByPk(orderId);
+  const order = await Order.findById(orderId);
   if (!order) throw new NotFoundError('Order not found');
 
   // Check authorization
@@ -215,9 +212,8 @@ router.post('/chat/send', authenticate, [
 
   // Add to order chat history
   const existingChat = order.chatHistory || [];
-  await order.update({
-    chatHistory: [...existingChat, chatMessage],
-  });
+  order.chatHistory = [...existingChat, chatMessage];
+  await order.save();
 
   // Send real-time notification
   const io = req.app.get('io');
@@ -233,7 +229,7 @@ router.post('/chat/send', authenticate, [
  * @desc    Get chat history for an order
  */
 router.get('/chat/:orderId', authenticate, asyncHandler(async (req: Request, res: Response) => {
-  const order = await Order.findByPk(req.params.orderId);
+  const order = await Order.findById(req.params.orderId);
   if (!order) throw new NotFoundError('Order not found');
 
   const allowedRoles = [UserRole.PHARMACIST, UserRole.SENIOR_PHARMACIST, UserRole.ADMIN_SUPER, UserRole.ADMIN_SUPPORT];
@@ -249,7 +245,7 @@ router.get('/chat/:orderId', authenticate, asyncHandler(async (req: Request, res
  * @desc    Mark messages as read
  */
 router.post('/chat/:orderId/read', authenticate, asyncHandler(async (req: Request, res: Response) => {
-  const order = await Order.findByPk(req.params.orderId);
+  const order = await Order.findById(req.params.orderId);
   if (!order) throw new NotFoundError('Order not found');
 
   // Mark all messages not from current user as read
@@ -260,7 +256,8 @@ router.post('/chat/:orderId/read', authenticate, asyncHandler(async (req: Reques
     return msg;
   });
 
-  await order.update({ chatHistory: updatedChat });
+  order.chatHistory = updatedChat;
+  await order.save();
 
   res.json({ success: true, message: 'Messages marked as read' });
 }));

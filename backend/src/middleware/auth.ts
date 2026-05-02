@@ -43,9 +43,7 @@ export const authenticate = async (
     let isActive = await cacheGet(cacheKey);
 
     if (isActive === null) {
-      const user = await User.findByPk(decoded.userId, {
-        attributes: ['id', 'isActive'],
-      });
+      const user = await User.findById(decoded.userId).select('isActive').lean();
 
       if (!user) {
         throw new UnauthorizedError('User not found');
@@ -218,9 +216,7 @@ export const require2FA = async (
   }
 
   // Check if user has 2FA enabled
-  const user = await User.findByPk(req.user.userId, {
-    attributes: ['twoFactorEnabled'],
-  });
+  const user = await User.findById(req.user.userId).select('twoFactorEnabled').lean();
 
   if (!user) {
     return next(new UnauthorizedError('User not found'));

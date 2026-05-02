@@ -109,17 +109,25 @@ export const errorHandler = (
     message = (err as any).message || 'File upload error';
   }
 
-  // Always log server-side (Render/production otherwise hides the real cause of 500s)
   const pgDetail =
     (err as any).parent?.message ||
     (err as any).original?.message ||
     (err as any).sqlMessage;
-  console.error('[API Error]', req.method, req.originalUrl, {
-    name: err.name,
-    message: err.message,
-    ...(pgDetail ? { pg: pgDetail } : {}),
-    stack: err.stack?.split('\n').slice(0, 8).join('\n'),
-  });
+
+  const operationalClientError =
+    err instanceof AppError && statusCode >= 400 && statusCode < 500;
+
+  // Expected auth/session failures flood logs if logged like 500s; keep full dumps for real failures.
+  if (operationalClientError) {
+    console.warn('[API]', req.method, req.originalUrl, statusCode, message);
+  } else {
+    console.error('[API Error]', req.method, req.originalUrl, {
+      name: err.name,
+      message: err.message,
+      ...(pgDetail ? { pg: pgDetail } : {}),
+      stack: err.stack?.split('\n').slice(0, 8).join('\n'),
+    });
+  }
 
   // Send error response
   const response: IApiResponse = {

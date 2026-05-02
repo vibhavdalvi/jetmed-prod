@@ -1,65 +1,59 @@
 // @ts-nocheck
 import { Router, Request, Response } from 'express';
 import { body, validationResult } from 'express-validator';
-import { Op } from 'sequelize';
 
-import { Order, OrderItem, User, UserProfile, Prescription, Medicine, Address } from '../models/index.js';
+import { Order, Prescription } from '../models/index.js';
 import { asyncHandler, BadRequestError, NotFoundError } from '../middleware/errorHandler.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 import { getFileUrl } from '../middleware/upload.js';
 import { UserRole, OrderStatus, PrescriptionStatus } from '../types/index.js';
 import { emitToUser, emitToWarehouse } from '../services/socket.js';
+import { M } from '../utils/mongoQuery.js';
+import { rxInsensitive } from '../utils/mongoSchema.js';
 
 const router = Router();
 
-// Middleware to restrict to pharmacist roles
 const pharmacistAuth = [authenticate, authorize(UserRole.PHARMACIST, UserRole.SENIOR_PHARMACIST, UserRole.ADMIN_SUPER)];
 
-/**
- * @route   GET /api/v1/pharmacist/queue
- * @desc    Get orders pending prescription review
- */
+const orderDetailPopulate = [
+  { path: 'user', populate: { path: 'profile' } },
+  { path: 'orderItems', populate: { path: 'medicine' } },
+  { path: 'deliveryAddress' },
+];
+
 router.get('/queue', ...pharmacistAuth, asyncHandler(async (req: Request, res: Response) => {
   const { page = '1', limit = '20', urgency } = req.query;
   const pageNum = parseInt(page as string) || 1;
   const limitNum = Math.min(parseInt(limit as string) || 20, 50);
 
-  const where: any = {
-    status: { [Op.in]: [OrderStatus.PLACED, OrderStatus.PENDING_REVIEW] },
+  const filter: Record<string, unknown> = {
+    status: M.in([OrderStatus.PLACED, OrderStatus.PENDING_REVIEW]),
     prescriptionRequired: true,
   };
-  if (urgency) where.urgencyLevel = urgency;
+  if (urgency) filter.urgencyLevel = urgency;
 
-  const { count, rows: orders } = await Order.findAndCountAll({
-    where,
-    order: [['urgencyLevel', 'DESC'], ['createdAt', 'ASC']],
-    limit: limitNum,
-    offset: (pageNum - 1) * limitNum,
-    include: [
-      { model: User, as: 'user', include: [{ model: UserProfile, as: 'profile' }] },
-      { model: Address, as: 'deliveryAddress' },
-    ],
-  });
+  const count = await Order.countDocuments(filter);
+  const orders = await Order.find(filter)
+    .sort({ urgencyLevel: -1, createdAt: 1 })
+    .skip((pageNum - 1) * limitNum)
+    .limit(limitNum)
+    .populate([
+      { path: 'user', populate: { path: 'profile' } },
+      { path: 'deliveryAddress' },
+    ]);
 
   const prescriptionIds = Array.from(
-    new Set(
-      orders.flatMap((order: any) => (Array.isArray(order.prescriptionIds) ? order.prescriptionIds : []))
-    )
+    new Set(orders.flatMap((order: any) => (Array.isArray(order.prescriptionIds) ? order.prescriptionIds : [])))
   );
   const prescriptions = prescriptionIds.length
-    ? await Prescription.findAll({
-        where: { id: { [Op.in]: prescriptionIds } },
-        attributes: ['id', 'filePath'],
-      })
+    ? await Prescription.find({ _id: M.in(prescriptionIds) }).select('filePath').lean()
     : [];
   const prescriptionImageMap = new Map(
-    prescriptions.map((prescription: any) => [prescription.id, prescription.filePath ? getFileUrl(prescription.filePath) : null])
+    prescriptions.map((p: any) => [String(p._id), p.filePath ? getFileUrl(p.filePath) : null])
   );
   const ordersWithPrescriptionImages = orders.map((order: any) => {
     const ids = Array.isArray(order.prescriptionIds) ? order.prescriptionIds : [];
-    const prescriptionImages = ids
-      .map((id: string) => prescriptionImageMap.get(id))
-      .filter(Boolean);
+    const prescriptionImages = ids.map((id: string) => prescriptionImageMap.get(id)).filter(Boolean);
     return {
       ...order.toJSON(),
       prescriptionImages,
@@ -72,25 +66,17 @@ router.get('/queue', ...pharmacistAuth, asyncHandler(async (req: Request, res: R
   });
 }));
 
-/**
- * @route   GET /api/v1/pharmacist/order/:id
- * @desc    Get order details for review
- */
 router.get('/order/:id', ...pharmacistAuth, asyncHandler(async (req: Request, res: Response) => {
-  const order = await Order.findByPk(req.params.id, {
-    include: [
-      { model: User, as: 'user', include: [{ model: UserProfile, as: 'profile' }] },
-      { model: OrderItem, as: 'orderItems', include: [{ model: Medicine, as: 'medicine' }] },
-      { model: Address, as: 'deliveryAddress' },
-    ],
-  });
+  const order = await Order.findOne({
+    $or: [{ _id: req.params.id }, { orderNumber: req.params.id }],
+  }).populate(orderDetailPopulate);
 
   if (!order) throw new NotFoundError('Order not found');
 
-  // Get associated prescriptions (include public URLs for review UI)
-  const prescriptions = order.prescriptionIds?.length > 0
-    ? await Prescription.findAll({ where: { id: { [Op.in]: order.prescriptionIds } } })
-    : [];
+  const prescriptions =
+    order.prescriptionIds?.length > 0
+      ? await Prescription.find({ _id: M.in(order.prescriptionIds) })
+      : [];
   const prescriptionsForClient = prescriptions.map((p: any) => {
     const plain = p.toJSON();
     return {
@@ -102,39 +88,35 @@ router.get('/order/:id', ...pharmacistAuth, asyncHandler(async (req: Request, re
   res.json({ success: true, data: { order, prescriptions: prescriptionsForClient } });
 }));
 
-/**
- * @route   POST /api/v1/pharmacist/order/:id/approve
- * @desc    Approve order after prescription review
- */
-router.post('/order/:id/approve', ...pharmacistAuth, [
-  body('notes').optional().isString(),
-], asyncHandler(async (req: Request, res: Response) => {
+router.post('/order/:id/approve', ...pharmacistAuth, [body('notes').optional().isString()], asyncHandler(async (req: Request, res: Response) => {
   const { notes, note, substitutions } = req.body;
 
-  const order = await Order.findByPk(req.params.id);
+  const order = await Order.findById(req.params.id);
   if (!order) throw new NotFoundError('Order not found');
 
   if (![OrderStatus.PLACED, OrderStatus.PENDING_REVIEW].includes(order.status)) {
     throw new BadRequestError('Order cannot be approved in current status');
   }
 
-  await order.update({
-    status: OrderStatus.APPROVED,
-    reviewedBy: req.user!.userId,
-    reviewedAt: new Date(),
-    pharmacistNotes: notes || note,
-    substitutions: substitutions || [],
-  });
+  order.status = OrderStatus.APPROVED;
+  order.reviewedBy = req.user!.userId;
+  order.reviewedAt = new Date();
+  order.pharmacistNotes = notes || note;
+  await order.save();
 
-  // Update associated prescriptions
   if (order.prescriptionIds?.length > 0) {
-    await Prescription.update(
-      { status: PrescriptionStatus.APPROVED, verifiedBy: req.user!.userId, verifiedAt: new Date() },
-      { where: { id: { [Op.in]: order.prescriptionIds } } }
+    await Prescription.updateMany(
+      { _id: M.in(order.prescriptionIds) },
+      {
+        $set: {
+          status: PrescriptionStatus.APPROVED,
+          verifiedBy: req.user!.userId,
+          verifiedAt: new Date(),
+        },
+      }
     );
   }
 
-  // Notify warehouse and customer
   const io = req.app.get('io');
   if (io) {
     emitToWarehouse(io, 'order:approved', { orderId: order.id, orderNumber: order.orderNumber });
@@ -144,66 +126,48 @@ router.post('/order/:id/approve', ...pharmacistAuth, [
   res.json({ success: true, message: 'Order approved', data: { order } });
 }));
 
-/**
- * @route   POST /api/v1/pharmacist/order/:id/reject
- * @desc    Reject order
- */
-router.post('/order/:id/reject', ...pharmacistAuth, [
-  body('reason').notEmpty().withMessage('Rejection reason is required'),
-], asyncHandler(async (req: Request, res: Response) => {
+router.post('/order/:id/reject', ...pharmacistAuth, [body('reason').notEmpty().withMessage('Rejection reason is required')], asyncHandler(async (req: Request, res: Response) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) throw new BadRequestError('Validation failed', errors.array());
 
-  const { reason, refundRequired } = req.body;
+  const { reason } = req.body;
 
-  const order = await Order.findByPk(req.params.id);
+  const order = await Order.findById(req.params.id);
   if (!order) throw new NotFoundError('Order not found');
 
-  await order.update({
-    status: OrderStatus.REJECTED,
-    reviewedBy: req.user!.userId,
-    reviewedAt: new Date(),
-    pharmacistNotes: reason,
-  });
+  order.status = OrderStatus.REJECTED;
+  order.reviewedBy = req.user!.userId;
+  order.reviewedAt = new Date();
+  order.pharmacistNotes = reason;
+  await order.save();
 
-  // Update prescriptions
   if (order.prescriptionIds?.length > 0) {
-    await Prescription.update(
-      { status: PrescriptionStatus.REJECTED, rejectionReason: reason },
-      { where: { id: { [Op.in]: order.prescriptionIds } } }
+    await Prescription.updateMany(
+      { _id: M.in(order.prescriptionIds) },
+      { $set: { status: PrescriptionStatus.REJECTED, rejectionReason: reason } }
     );
   }
 
-  // Notify customer
   const io = req.app.get('io');
   if (io) {
     emitToUser(io, order.userId, 'order:rejected', { orderId: order.id, orderNumber: order.orderNumber, reason });
   }
 
-  // TODO: Process refund if needed
-
   res.json({ success: true, message: 'Order rejected', data: { order } });
 }));
 
-/**
- * @route   POST /api/v1/pharmacist/order/:id/request-info
- * @desc    Request additional info from customer
- */
-router.post('/order/:id/request-info', ...pharmacistAuth, [
-  body('message').notEmpty(),
-], asyncHandler(async (req: Request, res: Response) => {
+router.post('/order/:id/request-info', ...pharmacistAuth, [body('message').notEmpty()], asyncHandler(async (req: Request, res: Response) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) throw new BadRequestError('Validation failed', errors.array());
 
   const { message } = req.body;
 
-  const order = await Order.findByPk(req.params.id);
+  const order = await Order.findById(req.params.id);
   if (!order) throw new NotFoundError('Order not found');
 
-  await order.update({
-    status: OrderStatus.PENDING_REVIEW,
-    pharmacistNotes: message,
-  });
+  order.status = OrderStatus.PENDING_REVIEW;
+  order.pharmacistNotes = message;
+  await order.save();
 
   const io = req.app.get('io');
   if (io) {
@@ -213,17 +177,14 @@ router.post('/order/:id/request-info', ...pharmacistAuth, [
   res.json({ success: true, message: 'Information requested from customer' });
 }));
 
-router.post('/order/:id/escalate', ...pharmacistAuth, [
-  body('note').optional().isString(),
-], asyncHandler(async (req: Request, res: Response) => {
-  const order = await Order.findByPk(req.params.id);
+router.post('/order/:id/escalate', ...pharmacistAuth, [body('note').optional().isString()], asyncHandler(async (req: Request, res: Response) => {
+  const order = await Order.findById(req.params.id);
   if (!order) throw new NotFoundError('Order not found');
 
   const note = req.body?.note || 'Escalated to senior pharmacist';
-  await order.update({
-    status: OrderStatus.PENDING_REVIEW,
-    pharmacistNotes: `ESCALATED: ${note}`,
-  });
+  order.status = OrderStatus.PENDING_REVIEW;
+  order.pharmacistNotes = `ESCALATED: ${note}`;
+  await order.save();
 
   const io = req.app.get('io');
   if (io) {
@@ -237,24 +198,24 @@ router.post('/order/:id/escalate', ...pharmacistAuth, [
   res.json({ success: true, message: 'Order escalated', data: { order } });
 }));
 
-/**
- * @route   GET /api/v1/pharmacist/stats
- * @desc    Get pharmacist stats
- */
 router.get('/stats', ...pharmacistAuth, asyncHandler(async (req: Request, res: Response) => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const pendingCount = await Order.count({
-    where: { status: { [Op.in]: [OrderStatus.PLACED, OrderStatus.PENDING_REVIEW] }, prescriptionRequired: true },
+  const pendingCount = await Order.countDocuments({
+    status: M.in([OrderStatus.PLACED, OrderStatus.PENDING_REVIEW]),
+    prescriptionRequired: true,
   });
 
-  const reviewedToday = await Order.count({
-    where: { reviewedBy: req.user!.userId, reviewedAt: { [Op.gte]: today } },
+  const reviewedToday = await Order.countDocuments({
+    reviewedBy: req.user!.userId,
+    reviewedAt: M.gte(today),
   });
 
-  const approvedToday = await Order.count({
-    where: { reviewedBy: req.user!.userId, reviewedAt: { [Op.gte]: today }, status: OrderStatus.APPROVED },
+  const approvedToday = await Order.countDocuments({
+    reviewedBy: req.user!.userId,
+    reviewedAt: M.gte(today),
+    status: OrderStatus.APPROVED,
   });
 
   res.json({
@@ -267,20 +228,22 @@ router.get('/queue/stats', ...pharmacistAuth, asyncHandler(async (req: Request, 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const total = await Order.count({
-    where: { status: { [Op.in]: [OrderStatus.PLACED, OrderStatus.PENDING_REVIEW] }, prescriptionRequired: true },
+  const total = await Order.countDocuments({
+    status: M.in([OrderStatus.PLACED, OrderStatus.PENDING_REVIEW]),
+    prescriptionRequired: true,
   });
-  const urgent = await Order.count({
-    where: {
-      status: { [Op.in]: [OrderStatus.PLACED, OrderStatus.PENDING_REVIEW] },
-      prescriptionRequired: true,
-      urgencyLevel: 'urgent',
-    },
+  const urgent = await Order.countDocuments({
+    status: M.in([OrderStatus.PLACED, OrderStatus.PENDING_REVIEW]),
+    prescriptionRequired: true,
+    urgencyLevel: 'urgent',
   });
-  const avgWait = await Order.findAll({
-    where: { status: { [Op.in]: [OrderStatus.PLACED, OrderStatus.PENDING_REVIEW] }, prescriptionRequired: true },
-    attributes: ['createdAt'],
-  });
+  const avgWait = await Order.find({
+    status: M.in([OrderStatus.PLACED, OrderStatus.PENDING_REVIEW]),
+    prescriptionRequired: true,
+  })
+    .select('createdAt')
+    .lean();
+
   const avgWaitTime = avgWait.length
     ? Math.round(
         avgWait.reduce((sum: number, order: any) => {
@@ -289,11 +252,13 @@ router.get('/queue/stats', ...pharmacistAuth, asyncHandler(async (req: Request, 
       )
     : 0;
 
-  const reviewedToday = await Order.count({
-    where: { reviewedBy: req.user!.userId, reviewedAt: { [Op.gte]: today } },
+  const reviewedToday = await Order.countDocuments({
+    reviewedBy: req.user!.userId,
+    reviewedAt: M.gte(today),
   });
-  const infoRequested = await Order.count({
-    where: { status: OrderStatus.PENDING_REVIEW, pharmacistNotes: { [Op.like]: '%info%' } },
+  const infoRequested = await Order.countDocuments({
+    status: OrderStatus.PENDING_REVIEW,
+    pharmacistNotes: rxInsensitive('info'),
   });
 
   res.json({

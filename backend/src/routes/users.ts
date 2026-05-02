@@ -14,14 +14,10 @@ const router = Router();
  * @desc    Get current user profile
  */
 router.get('/me', authenticate, asyncHandler(async (req: Request, res: Response) => {
-  const user = await User.findByPk(req.user!.userId, {
-    attributes: { exclude: ['password'] },
-    include: [
-      { model: UserProfile, as: 'profile' },
-      { model: UserMedicalInfo, as: 'medicalInfo' },
-      { model: Wallet, as: 'wallet' },
-    ],
-  });
+  const user = await User.findById(req.user!.userId)
+    .populate('profile')
+    .populate('medicalInfo')
+    .populate('wallet');
   if (!user) throw new NotFoundError('User not found');
   res.json({ success: true, data: { user } });
 }));
@@ -32,15 +28,32 @@ router.get('/me', authenticate, asyncHandler(async (req: Request, res: Response)
  */
 router.put('/me', authenticate, uploadAvatar, asyncHandler(async (req: Request, res: Response) => {
   const { firstName, lastName, dateOfBirth, gender, emergencyContact, preferences } = req.body;
-  const user = await User.findByPk(req.user!.userId);
+  const user = await User.findById(req.user!.userId);
   if (!user) throw new NotFoundError('User not found');
 
-  let profile = await UserProfile.findOne({ where: { userId: user.id } });
-  const profileData: any = { firstName, lastName, dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined, gender, emergencyContact, preferences };
+  let profile = await UserProfile.findOne({ userId: user.id });
+  const profileData: Record<string, unknown> = {
+    firstName,
+    lastName,
+    dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
+    gender,
+    emergencyContact,
+    preferences,
+  };
   if (req.file) profileData.avatar = getFileUrl(req.file.path);
 
-  if (profile) await profile.update(profileData);
-  else profile = await UserProfile.create({ userId: user.id, ...profileData });
+  if (profile) {
+    Object.assign(profile, profileData);
+    await profile.save();
+  } else {
+    profile = await UserProfile.create({
+      userId: user.id,
+      firstName: firstName || 'Customer',
+      lastName: lastName || 'User',
+      timezone: 'America/New_York',
+      ...profileData,
+    });
+  }
 
   res.json({ success: true, message: 'Profile updated', data: { profile } });
 }));
@@ -50,7 +63,7 @@ router.put('/me', authenticate, uploadAvatar, asyncHandler(async (req: Request, 
  * @desc    Get medical profile details
  */
 router.get('/me/medical-info', authenticate, asyncHandler(async (req: Request, res: Response) => {
-  const medicalInfo = await UserMedicalInfo.findOne({ where: { userId: req.user!.userId } });
+  const medicalInfo = await UserMedicalInfo.findOne({ userId: req.user!.userId });
   res.json({ success: true, data: { medicalInfo } });
 }));
 
@@ -73,14 +86,15 @@ router.put('/me/medical-info', authenticate, [
     allergies: Array.isArray(req.body.allergies) ? req.body.allergies : [],
     currentMedications: Array.isArray(req.body.currentMedications) ? req.body.currentMedications : [],
     chronicConditions: Array.isArray(req.body.chronicConditions) ? req.body.chronicConditions : [],
-    bloodType: req.body.bloodType || null,
-    emergencyContactName: req.body.emergencyContactName || null,
-    emergencyContactPhone: req.body.emergencyContactPhone || null,
+    bloodType: req.body.bloodType || undefined,
+    emergencyContactName: req.body.emergencyContactName || undefined,
+    emergencyContactPhone: req.body.emergencyContactPhone || undefined,
   };
 
-  let medicalInfo = await UserMedicalInfo.findOne({ where: { userId: req.user!.userId } });
+  let medicalInfo = await UserMedicalInfo.findOne({ userId: req.user!.userId });
   if (medicalInfo) {
-    await medicalInfo.update(payload);
+    Object.assign(medicalInfo, payload);
+    await medicalInfo.save();
   } else {
     medicalInfo = await UserMedicalInfo.create({ userId: req.user!.userId, ...payload });
   }
@@ -93,8 +107,8 @@ router.put('/me/medical-info', authenticate, [
  * @desc    Get notification preferences
  */
 router.get('/me/notifications', authenticate, asyncHandler(async (req: Request, res: Response) => {
-  const profile = await UserProfile.findOne({ where: { userId: req.user!.userId } });
-  const preferences = profile?.getDataValue('preferences') || {};
+  const profile = await UserProfile.findOne({ userId: req.user!.userId });
+  const preferences = (profile as { preferences?: Record<string, unknown> } | null)?.preferences || {};
   res.json({ success: true, data: { notifications: preferences } });
 }));
 
@@ -115,7 +129,7 @@ router.put('/me/notifications', authenticate, [
   const errors = validationResult(req);
   if (!errors.isEmpty()) throw new BadRequestError('Validation failed', errors.array());
 
-  let profile = await UserProfile.findOne({ where: { userId: req.user!.userId } });
+  let profile = await UserProfile.findOne({ userId: req.user!.userId });
   if (!profile) {
     profile = await UserProfile.create({
       userId: req.user!.userId,
@@ -125,13 +139,15 @@ router.put('/me/notifications', authenticate, [
     });
   }
 
-  const existingPreferences = profile.getDataValue('preferences') || {};
+  const existingPreferences =
+    (profile as unknown as { preferences?: Record<string, unknown> }).preferences || {};
   const nextPreferences = {
     ...existingPreferences,
     ...req.body,
   };
 
-  await profile.update({ preferences: nextPreferences } as any);
+  (profile as unknown as { preferences: Record<string, unknown> }).preferences = nextPreferences;
+  await profile.save();
 
   res.json({ success: true, message: 'Notification preferences updated', data: { notifications: nextPreferences } });
 }));
@@ -148,14 +164,14 @@ router.put('/me/password', authenticate, [
   if (!errors.isEmpty()) throw new BadRequestError('Validation failed', errors.array());
 
   const { currentPassword, newPassword } = req.body;
-  const user = await User.findByPk(req.user!.userId);
+  const user = await User.findById(req.user!.userId).select('+password');
   if (!user) throw new NotFoundError('User not found');
 
-  const isMatch = await bcrypt.compare(currentPassword, user.password);
+  const isMatch = await user.comparePassword(currentPassword);
   if (!isMatch) throw new BadRequestError('Current password is incorrect');
 
-  const hashedPassword = await bcrypt.hash(newPassword, 12);
-  await user.update({ password: hashedPassword });
+  user.password = newPassword;
+  await user.save();
 
   res.json({ success: true, message: 'Password changed' });
 }));
@@ -164,10 +180,9 @@ router.put('/me/password', authenticate, [
  * @route   GET /api/v1/users/me/addresses
  */
 router.get('/me/addresses', authenticate, asyncHandler(async (req: Request, res: Response) => {
-  const addresses = await Address.findAll({
-    where: { userId: req.user!.userId },
-    order: [['isDefault', 'DESC'], ['createdAt', 'DESC']],
-  });
+  const addresses = await Address.find({ userId: req.user!.userId })
+    .sort({ isDefault: -1, createdAt: -1 })
+    .lean();
   res.json({ success: true, data: { addresses } });
 }));
 
@@ -187,21 +202,21 @@ router.post('/me/addresses', authenticate, [
   const { label, streetAddress, apartment, city, state, zipCode, country, latitude, longitude, isDefault, deliveryInstructions } = req.body;
 
   if (isDefault) {
-    await Address.update({ isDefault: false }, { where: { userId: req.user!.userId } });
+    await Address.updateMany({ userId: req.user!.userId }, { $set: { isDefault: false } });
   }
 
   const address = await Address.create({
-    userId: req.user!.userId, 
-    label, 
-    streetAddress, 
-    apartment, 
-    city, 
-    state, 
+    userId: req.user!.userId,
+    label,
+    streetAddress,
+    apartment,
+    city,
+    state,
     zipCode,
-    country: country || 'United States', 
-    latitude, 
-    longitude, 
-    isDefault: isDefault || false, 
+    country: country || 'United States',
+    latitude,
+    longitude,
+    isDefault: isDefault || false,
     deliveryInstructions,
   });
 
@@ -212,14 +227,15 @@ router.post('/me/addresses', authenticate, [
  * @route   PUT /api/v1/users/me/addresses/:id
  */
 router.put('/me/addresses/:id', authenticate, asyncHandler(async (req: Request, res: Response) => {
-  const address = await Address.findOne({ where: { id: req.params.id, userId: req.user!.userId } });
+  const address = await Address.findOne({ _id: req.params.id, userId: req.user!.userId });
   if (!address) throw new NotFoundError('Address not found');
 
   if (req.body.isDefault) {
-    await Address.update({ isDefault: false }, { where: { userId: req.user!.userId } });
+    await Address.updateMany({ userId: req.user!.userId }, { $set: { isDefault: false } });
   }
 
-  await address.update(req.body);
+  Object.assign(address, req.body);
+  await address.save();
   res.json({ success: true, message: 'Address updated', data: { address } });
 }));
 
@@ -227,9 +243,9 @@ router.put('/me/addresses/:id', authenticate, asyncHandler(async (req: Request, 
  * @route   DELETE /api/v1/users/me/addresses/:id
  */
 router.delete('/me/addresses/:id', authenticate, asyncHandler(async (req: Request, res: Response) => {
-  const address = await Address.findOne({ where: { id: req.params.id, userId: req.user!.userId } });
+  const address = await Address.findOne({ _id: req.params.id, userId: req.user!.userId });
   if (!address) throw new NotFoundError('Address not found');
-  await address.destroy();
+  await address.deleteOne();
   res.json({ success: true, message: 'Address deleted' });
 }));
 
@@ -237,10 +253,7 @@ router.delete('/me/addresses/:id', authenticate, asyncHandler(async (req: Reques
  * @route   GET /api/v1/users/me/prescriptions
  */
 router.get('/me/prescriptions', authenticate, asyncHandler(async (req: Request, res: Response) => {
-  const prescriptions = await Prescription.findAll({
-    where: { userId: req.user!.userId },
-    order: [['createdAt', 'DESC']],
-  });
+  const prescriptions = await Prescription.find({ userId: req.user!.userId }).sort({ createdAt: -1 }).lean();
   res.json({ success: true, data: { prescriptions } });
 }));
 

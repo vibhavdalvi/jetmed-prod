@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/React-18.2-blue?logo=react" />
   <img src="https://img.shields.io/badge/Node.js-20+-green?logo=node.js" />
   <img src="https://img.shields.io/badge/TypeScript-5.3-blue?logo=typescript" />
-  <img src="https://img.shields.io/badge/PostgreSQL-14+-blue?logo=postgresql" />
+  <img src="https://img.shields.io/badge/MongoDB-6+-green?logo=mongodb" />
 </p>
 
 ---
@@ -62,7 +62,7 @@ JetMed is a **complete pharmacy delivery platform** built based on 38 comprehens
 
 ### Prerequisites
 - Node.js 18+
-- PostgreSQL 14+
+- MongoDB 6+ (local `mongod` or Atlas URI via `MONGODB_URI`)
 
 ### 1. Install Dependencies
 
@@ -84,7 +84,7 @@ cp backend/.env.production backend/.env
 ### 3. Setup Database
 
 ```bash
-createdb jetmed
+# Ensure MongoDB is running and MONGODB_URI is set (defaults to mongodb://127.0.0.1:27017/jetmed)
 npm run seed
 ```
 
@@ -156,7 +156,7 @@ Copy `backend/.env.production` to `backend/.env` and configure:
 |----------|---------------|
 | **App** | PORT, NODE_ENV, FRONTEND_URL |
 | **Auth** | JWT_SECRET, JWT_REFRESH_SECRET, SESSION_TIMEOUT_MINUTES=30 |
-| **Database** | POSTGRES_HOST, POSTGRES_DB, POSTGRES_PASSWORD |
+| **Database** | **MONGODB_URI** (required — MongoDB Atlas or local `mongodb://127.0.0.1:27017/jetmed`) |
 | **Stripe** | STRIPE_SECRET_KEY, STRIPE_PUBLISHABLE_KEY |
 | **Maps** | GOOGLE_MAPS_API_KEY |
 | **Agora** | AGORA_APP_ID, AGORA_APP_CERTIFICATE |

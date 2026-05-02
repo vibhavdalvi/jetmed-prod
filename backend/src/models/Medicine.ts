@@ -1,194 +1,67 @@
 // @ts-nocheck
-import { DataTypes, Model, Optional } from 'sequelize';
-import slugify from 'slugify';
-import sequelize from '../config/postgres.js';
-import { IMedicine, MedicineType, PrescriptionRequirement } from '../types/index.js';
+import slugifyModule from 'slugify';
+const slugify = (slugifyModule as unknown as { default?: typeof slugifyModule } & ((s: string, o?: object) => string)).default ?? (slugifyModule as (s: string, o?: object) => string);
+import mongoose, { Schema, type Model } from 'mongoose';
+import { MedicineType, PrescriptionRequirement } from '../types/index.js';
+import { addApiJson, uuidId } from '../utils/mongoSchema.js';
 
-interface MedicineCreationAttributes extends Optional<IMedicine, 'id' | 'createdAt' | 'updatedAt' | 'slug' | 'subcategory' | 'ageRestriction'> {}
-
-class Medicine extends Model<IMedicine, MedicineCreationAttributes> implements IMedicine {
-  declare id: string;
-  declare name: string;
-  declare genericName: string;
-  declare slug: string;
-  declare description: string;
-  declare manufacturer: string;
-  declare category: string;
-  declare subcategory?: string;
-  declare type: MedicineType;
-  declare prescriptionRequirement: PrescriptionRequirement;
-  declare dosageOptions: any[];
-  declare activeIngredients: string[];
-  declare uses: string[];
-  declare sideEffects: string[];
-  declare warnings: string[];
-  declare contraindications: string[];
-  declare drugInteractions: string[];
-  declare storageInstructions: string;
-  declare images: string[];
-  declare isVegan: boolean;
-  declare isSugarFree: boolean;
-  declare isAlcoholFree: boolean;
-  declare isPregnancySafe: boolean;
-  declare isLactationSafe: boolean;
-  declare isGlutenFree: boolean;
-  declare ageRestriction?: number;
-  declare isActive: boolean;
-  declare createdAt: Date;
-  declare updatedAt: Date;
-}
-
-Medicine.init(
+const medicineSchema = new Schema(
   {
-    id: {
-      type: DataTypes.UUID,
-      defaultValue: DataTypes.UUIDV4,
-      primaryKey: true,
-    },
-    name: {
-      type: DataTypes.STRING(300),
-      allowNull: false,
-    },
-    genericName: {
-      type: DataTypes.STRING(300),
-      allowNull: false,
-    },
-    slug: {
-      type: DataTypes.STRING(350),
-      allowNull: false,
-      unique: true,
-    },
-    description: {
-      type: DataTypes.TEXT,
-      allowNull: false,
-    },
-    manufacturer: {
-      type: DataTypes.STRING(200),
-      allowNull: false,
-    },
-    category: {
-      type: DataTypes.STRING(100),
-      allowNull: false,
-    },
-    subcategory: {
-      type: DataTypes.STRING(100),
-      allowNull: true,
-    },
-    type: {
-      type: DataTypes.ENUM(...Object.values(MedicineType)),
-      allowNull: false,
-    },
+    _id: { ...uuidId },
+    name: { type: String, required: true },
+    genericName: { type: String, required: true },
+    slug: { type: String, required: true, unique: true },
+    description: { type: String, required: true },
+    manufacturer: { type: String, required: true },
+    category: { type: String, required: true },
+    subcategory: String,
+    type: { type: String, enum: Object.values(MedicineType), required: true },
     prescriptionRequirement: {
-      type: DataTypes.ENUM(...Object.values(PrescriptionRequirement)),
-      allowNull: false,
-      defaultValue: PrescriptionRequirement.OTC,
+      type: String,
+      enum: Object.values(PrescriptionRequirement),
+      default: PrescriptionRequirement.OTC,
     },
-    dosageOptions: {
-      type: DataTypes.JSONB,
-      allowNull: false,
-      defaultValue: [],
-    },
-    activeIngredients: {
-      type: DataTypes.ARRAY(DataTypes.STRING),
-      defaultValue: [],
-    },
-    uses: {
-      type: DataTypes.ARRAY(DataTypes.TEXT),
-      defaultValue: [],
-    },
-    sideEffects: {
-      type: DataTypes.ARRAY(DataTypes.TEXT),
-      defaultValue: [],
-    },
-    warnings: {
-      type: DataTypes.ARRAY(DataTypes.TEXT),
-      defaultValue: [],
-    },
-    contraindications: {
-      type: DataTypes.ARRAY(DataTypes.TEXT),
-      defaultValue: [],
-    },
-    drugInteractions: {
-      type: DataTypes.ARRAY(DataTypes.STRING),
-      defaultValue: [],
-    },
+    dosageOptions: { type: [Schema.Types.Mixed], default: [] },
+    activeIngredients: { type: [String], default: [] },
+    uses: { type: [String], default: [] },
+    sideEffects: { type: [String], default: [] },
+    warnings: { type: [String], default: [] },
+    contraindications: { type: [String], default: [] },
+    drugInteractions: { type: [String], default: [] },
     storageInstructions: {
-      type: DataTypes.TEXT,
-      allowNull: false,
-      defaultValue: 'Store in a cool, dry place away from direct sunlight.',
+      type: String,
+      default: 'Store in a cool, dry place away from direct sunlight.',
     },
-    images: {
-      type: DataTypes.ARRAY(DataTypes.STRING),
-      defaultValue: [],
-    },
-    isVegan: {
-      type: DataTypes.BOOLEAN,
-      defaultValue: false,
-    },
-    isSugarFree: {
-      type: DataTypes.BOOLEAN,
-      defaultValue: false,
-    },
-    isAlcoholFree: {
-      type: DataTypes.BOOLEAN,
-      defaultValue: true,
-    },
-    isPregnancySafe: {
-      type: DataTypes.BOOLEAN,
-      defaultValue: false,
-    },
-    isLactationSafe: {
-      type: DataTypes.BOOLEAN,
-      defaultValue: false,
-    },
-    isGlutenFree: {
-      type: DataTypes.BOOLEAN,
-      defaultValue: true,
-    },
-    ageRestriction: {
-      type: DataTypes.INTEGER,
-      allowNull: true,
-    },
-    isActive: {
-      type: DataTypes.BOOLEAN,
-      defaultValue: true,
-    },
-    createdAt: {
-      type: DataTypes.DATE,
-      defaultValue: DataTypes.NOW,
-    },
-    updatedAt: {
-      type: DataTypes.DATE,
-      defaultValue: DataTypes.NOW,
-    },
+    images: { type: [String], default: [] },
+    isVegan: { type: Boolean, default: false },
+    isSugarFree: { type: Boolean, default: false },
+    isAlcoholFree: { type: Boolean, default: true },
+    isPregnancySafe: { type: Boolean, default: false },
+    isLactationSafe: { type: Boolean, default: false },
+    isGlutenFree: { type: Boolean, default: true },
+    ageRestriction: Number,
+    isActive: { type: Boolean, default: true },
   },
-  {
-    sequelize,
-    tableName: 'medicines',
-    underscored: false,
-    timestamps: true,
-    hooks: {
-      beforeValidate: (medicine) => {
-        if (medicine.name && !medicine.slug) {
-          medicine.slug = slugify(medicine.name, { lower: true, strict: true });
-        }
-      },
-    },
-    indexes: [
-      { fields: ['slug'], unique: true },
-      { fields: ['name'] },
-      { fields: ['genericName'] },
-      { fields: ['category'] },
-      { fields: ['type'] },
-      { fields: ['prescriptionRequirement'] },
-      { fields: ['manufacturer'] },
-      { fields: ['isActive'] },
-      { 
-        fields: ['category', 'type', 'prescriptionRequirement'],
-        name: 'idx_medicine_filters',
-      },
-    ],
-  }
+  { timestamps: true }
 );
 
+medicineSchema.pre('validate', function (next) {
+  if (this.name && !(this as { slug?: string }).slug) {
+    (this as { slug: string }).slug = slugify(String(this.name), { lower: true, strict: true });
+  }
+  next();
+});
+
+medicineSchema.virtual('inventoryItems', {
+  ref: 'Inventory',
+  localField: '_id',
+  foreignField: 'medicineId',
+});
+
+addApiJson(medicineSchema);
+
+medicineSchema.index({ name: 'text', genericName: 'text', category: 'text' });
+
+const Medicine =
+  (mongoose.models.Medicine as Model<unknown>) || mongoose.model('Medicine', medicineSchema);
 export default Medicine;

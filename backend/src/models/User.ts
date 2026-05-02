@@ -1,118 +1,60 @@
-// @ts-nocheck
-import { DataTypes, Model, Optional } from 'sequelize';
 import bcrypt from 'bcryptjs';
-import sequelize from '../config/postgres.js';
-import { IUser, UserRole } from '../types/index.js';
+import mongoose, { Schema, type InferSchemaType, type Model } from 'mongoose';
+import { UserRole } from '../types/index.js';
+import { addApiJson, uuidId } from '../utils/mongoSchema.js';
 
-interface UserCreationAttributes extends Optional<IUser, 'id' | 'createdAt' | 'updatedAt' | 'phone' | 'twoFactorSecret'> {}
-
-class User extends Model<IUser, UserCreationAttributes> implements IUser {
-  declare id: string;
-  declare email: string;
-  declare phone?: string;
-  declare password: string;
-  declare role: UserRole;
-  declare isActive: boolean;
-  declare isVerified: boolean;
-  declare twoFactorEnabled: boolean;
-  declare twoFactorSecret?: string;
-  declare createdAt: Date;
-  declare updatedAt: Date;
-
-  // Instance method to check password
-  async comparePassword(candidatePassword: string): Promise<boolean> {
-    return bcrypt.compare(candidatePassword, this.password);
-  }
-
-  // Remove sensitive fields when converting to JSON
-  toJSON() {
-    const values = { ...this.get() };
-    delete values.password;
-    delete values.twoFactorSecret;
-    return values;
-  }
-}
-
-User.init(
+const userSchema = new Schema(
   {
-    id: {
-      type: DataTypes.UUID,
-      defaultValue: DataTypes.UUIDV4,
-      primaryKey: true,
-    },
-    email: {
-      type: DataTypes.STRING(255),
-      allowNull: false,
-      unique: true,
-      validate: {
-        isEmail: true,
-      },
-    },
-    phone: {
-      type: DataTypes.STRING(20),
-      allowNull: true,
-      unique: true,
-    },
-    password: {
-      type: DataTypes.STRING(255),
-      allowNull: false,
-    },
-    role: {
-      type: DataTypes.ENUM(...Object.values(UserRole)),
-      allowNull: false,
-      defaultValue: UserRole.CUSTOMER,
-    },
-    isActive: {
-      type: DataTypes.BOOLEAN,
-      defaultValue: true,
-    },
-    isVerified: {
-      type: DataTypes.BOOLEAN,
-      defaultValue: false,
-    },
-    twoFactorEnabled: {
-      type: DataTypes.BOOLEAN,
-      defaultValue: false,
-    },
-    twoFactorSecret: {
-      type: DataTypes.STRING(255),
-      allowNull: true,
-    },
-    createdAt: {
-      type: DataTypes.DATE,
-      defaultValue: DataTypes.NOW,
-    },
-    updatedAt: {
-      type: DataTypes.DATE,
-      defaultValue: DataTypes.NOW,
-    },
+    _id: { ...uuidId },
+    email: { type: String, required: true, unique: true, trim: true, lowercase: true },
+    phone: { type: String, unique: true, sparse: true },
+    password: { type: String, required: true, select: false },
+    role: { type: String, enum: Object.values(UserRole), default: UserRole.CUSTOMER },
+    isActive: { type: Boolean, default: true },
+    isVerified: { type: Boolean, default: false },
+    twoFactorEnabled: { type: Boolean, default: false },
+    twoFactorSecret: { type: String, select: false },
   },
-  {
-    sequelize,
-    tableName: 'users',
-    underscored: false,
-    timestamps: true,
-    hooks: {
-      beforeCreate: async (user) => {
-        if (user.password) {
-          const salt = await bcrypt.genSalt(12);
-          user.password = await bcrypt.hash(user.password, salt);
-        }
-      },
-      beforeUpdate: async (user) => {
-        if (user.changed('password')) {
-          const salt = await bcrypt.genSalt(12);
-          user.password = await bcrypt.hash(user.password, salt);
-        }
-      },
-    },
-    indexes: [
-      { fields: ['email'], unique: true },
-      { fields: ['phone'], unique: true },
-      { fields: ['role'] },
-      { fields: ['isActive'] },
-    ],
-  }
+  { timestamps: true }
 );
 
+userSchema.virtual('profile', {
+  ref: 'UserProfile',
+  localField: '_id',
+  foreignField: 'userId',
+  justOne: true,
+});
+userSchema.virtual('medicalInfo', {
+  ref: 'UserMedicalInfo',
+  localField: '_id',
+  foreignField: 'userId',
+  justOne: true,
+});
+userSchema.virtual('wallet', {
+  ref: 'Wallet',
+  localField: '_id',
+  foreignField: 'userId',
+  justOne: true,
+});
+
+addApiJson(userSchema);
+
+userSchema.pre('save', async function (next) {
+  if (!this.isModified('password')) return next();
+  if (typeof this.password === 'string' && /^\$2[aby]\$/.test(this.password)) return next();
+  const salt = await bcrypt.genSalt(12);
+  this.password = await bcrypt.hash(this.password, salt);
+  next();
+});
+
+userSchema.methods.comparePassword = async function (candidate: string): Promise<boolean> {
+  return bcrypt.compare(candidate, this.password as string);
+};
+
+type UserDoc = InferSchemaType<typeof userSchema> & {
+  _id: string;
+  comparePassword: (c: string) => Promise<boolean>;
+};
+
+const User: Model<UserDoc> = mongoose.models.User || mongoose.model<UserDoc>('User', userSchema);
 export default User;

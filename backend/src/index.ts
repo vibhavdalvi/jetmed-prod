@@ -9,14 +9,12 @@ import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import mongoose from 'mongoose';
 
 import config, { getCorsAllowedOrigins, isOriginAllowed } from './config/index.js';
-import sequelize, { connectPostgres } from './config/postgres.js';
-import { connectMongoDB } from './config/mongodb.js';
+import mongoose, { connectMongoDB } from './config/mongodb.js';
 import { connectRedis, getRedisClient } from './config/redis.js';
 import { checkServicesHealth } from './services/index.js';
-// Elasticsearch removed - using PostgreSQL for search instead
+// Elasticsearch optional — medicine search falls back to MongoDB queries
 
 // Import routes
 import authRoutes from './routes/auth.js';
@@ -47,14 +45,15 @@ const __dirname = path.dirname(__filename);
 
 // Initialize Express app
 const app: Express = express();
-// Render/Railway set X-Forwarded-For; required for correct client IP + express-rate-limit
-// Use TRUST_PROXY=false to opt out. Number of hops: TRUST_PROXY=2, etc. Default: trust (true).
+// Render/Railway set X-Forwarded-For; required for correct client IP + express-rate-limit.
+// Default `1` = trust one proxy hop (typical LB). Boolean `true` trips express-rate-limit
+// ERR_ERL_PERMISSIVE_TRUST_PROXY. Use TRUST_PROXY=false locally; TRUST_PROXY=N for N hops.
 if (process.env.TRUST_PROXY === 'false') {
   app.set('trust proxy', false);
 } else if (process.env.TRUST_PROXY && /^\d+$/.test(process.env.TRUST_PROXY)) {
   app.set('trust proxy', parseInt(process.env.TRUST_PROXY, 10));
 } else {
-  app.set('trust proxy', true);
+  app.set('trust proxy', 1);
 }
 const httpServer = createServer(app);
 
@@ -189,15 +188,8 @@ app.get('/health', (_req: Request, res: Response) => {
   });
 });
 
-app.get('/health/ready', async (req: Request, res: Response) => {
-  const postgresOk = await sequelize
-    .authenticate()
-    .then(() => true)
-    .catch(() => false);
-
-  const mongoSkipped = !config.mongodb.uri?.trim();
-  const mongoConnected = mongoose.connection.readyState === 1;
-  const mongoOk = mongoSkipped || mongoConnected;
+app.get('/health/ready', async (_req: Request, res: Response) => {
+  const mongoOk = mongoose.connection.readyState === 1;
 
   const redisSkipped = !config.redis.host;
   const redisPingOk = await (async () => {
@@ -212,13 +204,11 @@ app.get('/health/ready', async (req: Request, res: Response) => {
   })();
 
   const dependencies = {
-    postgres: postgresOk ? 'up' : 'down',
-    mongodb: mongoSkipped ? 'skipped' : mongoConnected ? 'up' : 'down',
+    mongodb: mongoOk ? 'up' : 'down',
     redis: redisSkipped ? 'skipped' : redisPingOk ? 'up' : 'down',
   };
 
-  const allHealthy =
-    postgresOk && mongoOk && (redisSkipped || redisPingOk);
+  const allHealthy = mongoOk && (redisSkipped || redisPingOk);
   res.status(allHealthy ? 200 : 503).json({
     success: allHealthy,
     status: allHealthy ? 'ready' : 'degraded',
@@ -228,8 +218,8 @@ app.get('/health/ready', async (req: Request, res: Response) => {
   });
 });
 
-// API documentation
-app.get('/api', (req: Request, res: Response) => {
+// API discovery — `/api` and versioned root (`/api/v1`) so probes to `/api/v1/` don't 404
+const sendApiDiscovery = (_req: Request, res: Response) => {
   res.status(200).json({
     success: true,
     message: 'Welcome to JetMed API',
@@ -251,7 +241,9 @@ app.get('/api', (req: Request, res: Response) => {
       sms: `${apiVersion}/sms`,
     },
   });
-});
+};
+app.get('/api', sendApiDiscovery);
+app.get(apiVersion, sendApiDiscovery);
 
 // Setup Swagger documentation
 setupSwagger(app);
@@ -271,10 +263,8 @@ const startServer = async () => {
     // Connect to databases (SendGrid/Firebase log at import time — warnings only, non-fatal)
     console.log('🔌 Connecting to databases...');
     
-    await connectPostgres();
     await connectMongoDB();
     await connectRedis();
-    // Elasticsearch removed - search uses PostgreSQL
 
     // Start HTTP server (0.0.0.0 so Railway/Docker health checks can reach the port)
     httpServer.listen(config.app.port, config.app.listenHost, () => {

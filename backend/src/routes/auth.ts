@@ -18,7 +18,7 @@ import { recordActivity, requestAuditContext } from '../services/activityLog.js'
 const router = Router();
 
 // Helper function to generate tokens
-const generateTokens = (user: User) => {
+const generateTokens = (user: { id: string; email: string; role: string }) => {
   const payload: IJwtPayload = {
     userId: user.id,
     email: user.email,
@@ -72,14 +72,14 @@ router.post(
     const { email, password, firstName, lastName, phone, dateOfBirth, gender } = req.body;
 
     // Check if user already exists
-    const existingUser = await User.findOne({ where: { email } });
+    const existingUser = await User.findOne({ email });
     if (existingUser) {
       throw new ConflictError('User with this email already exists');
     }
 
     // Check if phone is already used
     if (phone) {
-      const existingPhone = await User.findOne({ where: { phone } });
+      const existingPhone = await User.findOne({ phone });
       if (existingPhone) {
         throw new ConflictError('Phone number is already registered');
       }
@@ -190,12 +190,9 @@ router.post(
     }
 
     // Find user
-    const user = await User.findOne({
-      where: { email },
-      include: [
-        { model: UserProfile, as: 'profile' },
-      ],
-    });
+    const user = await User.findOne({ email })
+      .select('+password')
+      .populate('profile');
 
     if (!user) {
       // Increment failed attempts
@@ -313,7 +310,7 @@ router.post(
       }
 
       // Get user
-      const user = await User.findByPk(decoded.userId);
+      const user = await User.findById(decoded.userId);
       if (!user || !user.isActive) {
         throw new UnauthorizedError('User not found or inactive');
       }
@@ -359,7 +356,7 @@ router.post(
   '/2fa/setup',
   authenticate,
   asyncHandler(async (req: Request, res: Response) => {
-    const user = await User.findByPk(req.user!.userId);
+    const user = await User.findById(req.user!.userId);
     if (!user) {
       throw new UnauthorizedError('User not found');
     }
@@ -403,7 +400,7 @@ router.post(
     }
 
     const { token } = req.body;
-    const user = await User.findByPk(req.user!.userId);
+    const user = await User.findById(req.user!.userId);
     if (!user) {
       throw new UnauthorizedError('User not found');
     }
@@ -457,7 +454,7 @@ router.post(
     }
 
     const { userId, token } = req.body;
-    const user = await User.findByPk(userId);
+    const user = await User.findById(userId).select('+twoFactorSecret');
     if (!user || !user.twoFactorSecret) {
       throw new UnauthorizedError('Invalid request');
     }
@@ -505,7 +502,7 @@ router.post(
     }
 
     const { password } = req.body;
-    const user = await User.findByPk(req.user!.userId);
+    const user = await User.findById(req.user!.userId).select('+password');
     if (!user) {
       throw new UnauthorizedError('User not found');
     }
@@ -537,13 +534,10 @@ router.get(
   '/me',
   authenticate,
   asyncHandler(async (req: Request, res: Response) => {
-    const user = await User.findByPk(req.user!.userId, {
-      include: [
-        { model: UserProfile, as: 'profile' },
-        { model: UserMedicalInfo, as: 'medicalInfo' },
-        { model: Wallet, as: 'wallet' },
-      ],
-    });
+    const user = await User.findById(req.user!.userId)
+      .populate('profile')
+      .populate('medicalInfo')
+      .populate('wallet');
 
     if (!user) {
       throw new UnauthorizedError('User not found');

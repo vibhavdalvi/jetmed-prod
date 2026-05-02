@@ -1,366 +1,170 @@
-import { DataTypes, Model, Optional } from 'sequelize';
-import sequelize from '../config/postgres.js';
-import { IOrder, IOrderItem, IGuidedResponse, OrderStatus, DeliveryType, UrgencyLevel } from '../types/index.js';
+// @ts-nocheck
+import mongoose, { Schema, type Model } from 'mongoose';
+import { OrderStatus, DeliveryType, UrgencyLevel } from '../types/index.js';
+import { addApiJson, uuidId } from '../utils/mongoSchema.js';
 
-// ==================== ORDER MODEL ====================
-
-interface OrderCreationAttributes extends Optional<IOrder, 'id' | 'createdAt' | 'updatedAt' | 'orderNumber' | 'symptomsDescription' | 'guidedResponses' | 'pharmacistNotes' | 'reviewedBy' | 'reviewedAt' | 'packedBy' | 'packedAt' | 'deliveryPartnerId' | 'deliveryStartedAt' | 'deliveredAt' | 'deliveryOTP' | 'deliveryProofImage' | 'deliveryNotes' | 'cancellationReason' | 'cancelledBy' | 'cancelledAt' | 'scheduledDate' | 'scheduledTimeSlot' | 'promoCodeId'> {}
-
-class Order extends Model<IOrder, OrderCreationAttributes> implements IOrder {
-  declare id: string;
-  declare orderNumber: string;
-  declare userId: string;
-  declare warehouseId: string;
-  declare addressId: string;
-  declare status: OrderStatus;
-  declare items: IOrderItem[];
-  declare subtotal: number;
-  declare deliveryFee: number;
-  declare platformFee: number;
-  declare taxAmount: number;
-  declare discountAmount: number;
-  declare tipAmount: number;
-  declare totalAmount: number;
-  declare deliveryType: DeliveryType;
-  declare scheduledDate?: Date;
-  declare scheduledTimeSlot?: string;
-  declare urgencyLevel: UrgencyLevel;
-  declare prescriptionRequired: boolean;
-  declare prescriptionIds: string[];
-  declare symptomsDescription?: string;
-  declare guidedResponses?: IGuidedResponse;
-  declare pharmacistNotes?: string;
-  declare reviewedBy?: string;
-  declare reviewedAt?: Date;
-  declare packedBy?: string;
-  declare packedAt?: Date;
-  declare deliveryPartnerId?: string;
-  declare deliveryStartedAt?: Date;
-  declare deliveredAt?: Date;
-  declare deliveryOTP?: string;
-  declare deliveryProofImage?: string;
-  declare deliveryNotes?: string;
-  declare cancellationReason?: string;
-  declare cancelledBy?: string;
-  declare cancelledAt?: Date;
-  declare promoCodeId?: string;
-  declare createdAt: Date;
-  declare updatedAt: Date;
-
-  // Generate 6-digit OTP
-  static generateOTP(): string {
-    return Math.floor(100000 + Math.random() * 900000).toString();
-  }
-
-  // Generate order number
-  static generateOrderNumber(): string {
-    const timestamp = Date.now().toString(36).toUpperCase();
-    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-    return `JM-${timestamp}-${random}`;
-  }
-}
-
-Order.init(
+const orderItemSchema = new Schema(
   {
-    id: {
-      type: DataTypes.UUID,
-      defaultValue: DataTypes.UUIDV4,
-      primaryKey: true,
-    },
-    orderNumber: {
-      type: DataTypes.STRING(30),
-      allowNull: false,
-      unique: true,
-    },
-    userId: {
-      type: DataTypes.UUID,
-      allowNull: false,
-      references: {
-        model: 'users',
-        key: 'id',
-      },
-    },
-    warehouseId: {
-      type: DataTypes.UUID,
-      allowNull: false,
-      references: {
-        model: 'warehouses',
-        key: 'id',
-      },
-    },
-    addressId: {
-      type: DataTypes.UUID,
-      allowNull: false,
-      references: {
-        model: 'addresses',
-        key: 'id',
-      },
-    },
+    _id: { ...uuidId },
+    orderId: { type: String, required: true, index: true },
+    medicineId: { type: String, required: true, ref: 'Medicine' },
+    dosageOptionId: { type: String, required: true },
+    quantity: { type: Number, required: true, min: 1 },
+    unitPrice: { type: Number, required: true },
+    totalPrice: { type: Number, required: true },
+    prescriptionRequired: { type: Boolean, default: false },
+  },
+  { timestamps: false }
+);
+
+addApiJson(orderItemSchema);
+
+orderItemSchema.virtual('medicine', {
+  ref: 'Medicine',
+  localField: 'medicineId',
+  foreignField: '_id',
+  justOne: true,
+});
+
+const orderSchema = new Schema(
+  {
+    _id: { ...uuidId },
+    orderNumber: { type: String, required: true, unique: true },
+    userId: { type: String, required: true, index: true, ref: 'User' },
+    warehouseId: { type: String, required: true, ref: 'Warehouse' },
+    addressId: { type: String, required: true, ref: 'Address' },
     status: {
-      type: DataTypes.ENUM(...Object.values(OrderStatus)),
-      allowNull: false,
-      defaultValue: OrderStatus.PLACED,
+      type: String,
+      enum: Object.values(OrderStatus),
+      default: OrderStatus.PLACED,
     },
-    items: {
-      type: DataTypes.JSONB,
-      allowNull: false,
-      defaultValue: [],
-    },
-    subtotal: {
-      type: DataTypes.DECIMAL(10, 2),
-      allowNull: false,
-    },
-    deliveryFee: {
-      type: DataTypes.DECIMAL(10, 2),
-      allowNull: false,
-      defaultValue: 0,
-    },
-    platformFee: {
-      type: DataTypes.DECIMAL(10, 2),
-      allowNull: false,
-      defaultValue: 0,
-    },
-    taxAmount: {
-      type: DataTypes.DECIMAL(10, 2),
-      allowNull: false,
-      defaultValue: 0,
-    },
-    discountAmount: {
-      type: DataTypes.DECIMAL(10, 2),
-      allowNull: false,
-      defaultValue: 0,
-    },
-    tipAmount: {
-      type: DataTypes.DECIMAL(10, 2),
-      allowNull: false,
-      defaultValue: 0,
-    },
-    totalAmount: {
-      type: DataTypes.DECIMAL(10, 2),
-      allowNull: false,
-    },
+    items: { type: [Schema.Types.Mixed], default: [] },
+    subtotal: { type: Number, required: true },
+    deliveryFee: { type: Number, default: 0 },
+    platformFee: { type: Number, default: 0 },
+    taxAmount: { type: Number, default: 0 },
+    discountAmount: { type: Number, default: 0 },
+    tipAmount: { type: Number, default: 0 },
+    totalAmount: { type: Number, required: true },
     deliveryType: {
-      type: DataTypes.ENUM(...Object.values(DeliveryType)),
-      allowNull: false,
-      defaultValue: DeliveryType.STANDARD,
+      type: String,
+      enum: Object.values(DeliveryType),
+      default: DeliveryType.STANDARD,
     },
-    scheduledDate: {
-      type: DataTypes.DATEONLY,
-      allowNull: true,
-    },
-    scheduledTimeSlot: {
-      type: DataTypes.STRING(50),
-      allowNull: true,
-    },
+    scheduledDate: Date,
+    scheduledTimeSlot: String,
     urgencyLevel: {
-      type: DataTypes.ENUM(...Object.values(UrgencyLevel)),
-      allowNull: false,
-      defaultValue: UrgencyLevel.ROUTINE,
+      type: String,
+      enum: Object.values(UrgencyLevel),
+      default: UrgencyLevel.ROUTINE,
     },
-    prescriptionRequired: {
-      type: DataTypes.BOOLEAN,
-      allowNull: false,
-      defaultValue: false,
-    },
-    prescriptionIds: {
-      type: DataTypes.ARRAY(DataTypes.UUID),
-      defaultValue: [],
-    },
-    symptomsDescription: {
-      type: DataTypes.TEXT,
-      allowNull: true,
-    },
-    guidedResponses: {
-      type: DataTypes.JSONB,
-      allowNull: true,
-    },
-    pharmacistNotes: {
-      type: DataTypes.TEXT,
-      allowNull: true,
-    },
-    reviewedBy: {
-      type: DataTypes.UUID,
-      allowNull: true,
-      references: {
-        model: 'users',
-        key: 'id',
-      },
-    },
-    reviewedAt: {
-      type: DataTypes.DATE,
-      allowNull: true,
-    },
-    packedBy: {
-      type: DataTypes.UUID,
-      allowNull: true,
-      references: {
-        model: 'users',
-        key: 'id',
-      },
-    },
-    packedAt: {
-      type: DataTypes.DATE,
-      allowNull: true,
-    },
-    deliveryPartnerId: {
-      type: DataTypes.UUID,
-      allowNull: true,
-      references: {
-        model: 'users',
-        key: 'id',
-      },
-    },
-    deliveryStartedAt: {
-      type: DataTypes.DATE,
-      allowNull: true,
-    },
-    deliveredAt: {
-      type: DataTypes.DATE,
-      allowNull: true,
-    },
-    deliveryOTP: {
-      type: DataTypes.STRING(10),
-      allowNull: true,
-    },
-    deliveryProofImage: {
-      type: DataTypes.STRING(500),
-      allowNull: true,
-    },
-    deliveryNotes: {
-      type: DataTypes.TEXT,
-      allowNull: true,
-    },
-    cancellationReason: {
-      type: DataTypes.TEXT,
-      allowNull: true,
-    },
-    cancelledBy: {
-      type: DataTypes.UUID,
-      allowNull: true,
-    },
-    cancelledAt: {
-      type: DataTypes.DATE,
-      allowNull: true,
-    },
-    promoCodeId: {
-      type: DataTypes.UUID,
-      allowNull: true,
-    },
-    createdAt: {
-      type: DataTypes.DATE,
-      defaultValue: DataTypes.NOW,
-    },
-    updatedAt: {
-      type: DataTypes.DATE,
-      defaultValue: DataTypes.NOW,
-    },
+    prescriptionRequired: { type: Boolean, default: false },
+    prescriptionIds: { type: [String], default: [] },
+    symptomsDescription: String,
+    guidedResponses: Schema.Types.Mixed,
+    pharmacistNotes: String,
+    reviewedBy: { type: String, ref: 'User' },
+    reviewedAt: Date,
+    packedBy: { type: String, ref: 'User' },
+    packedAt: Date,
+    deliveryPartnerId: { type: String, ref: 'User' },
+    deliveryStartedAt: Date,
+    deliveredAt: Date,
+    deliveryOTP: String,
+    deliveryProofImage: String,
+    deliveryNotes: String,
+    cancellationReason: String,
+    cancelledBy: String,
+    cancelledAt: Date,
+    promoCodeId: String,
+    deliveryLocation: Schema.Types.Mixed,
+    deliveryLocationUpdatedAt: Date,
+    deliverySignature: String,
+    deliveryPhotoProof: String,
+    deliveryIssue: Schema.Types.Mixed,
+    packageWeight: Number,
+    packageDimensions: Schema.Types.Mixed,
+    packingNotes: String,
+    callLogs: { type: [Schema.Types.Mixed], default: [] },
+    chatHistory: { type: [Schema.Types.Mixed], default: [] },
   },
-  {
-    sequelize,
-    tableName: 'orders',
-    underscored: false,
-    timestamps: true,
-    hooks: {
-      beforeCreate: (order) => {
-        if (!order.orderNumber) {
-          order.orderNumber = Order.generateOrderNumber();
-        }
-        if (order.prescriptionRequired && !order.deliveryOTP) {
-          order.deliveryOTP = Order.generateOTP();
-        }
-      },
-    },
-    indexes: [
-      { fields: ['orderNumber'], unique: true },
-      { fields: ['userId'] },
-      { fields: ['status'] },
-      { fields: ['warehouseId'] },
-      { fields: ['deliveryPartnerId'] },
-      { fields: ['createdAt'] },
-      { fields: ['urgencyLevel', 'status'] },
-      { fields: ['deliveryType'] },
-      {
-        fields: ['status', 'urgencyLevel', 'createdAt'],
-        name: 'idx_order_queue',
-      },
-    ],
-  }
+  { timestamps: true }
 );
 
-// ==================== ORDER ITEM MODEL ====================
-
-interface OrderItemCreationAttributes extends Optional<IOrderItem, 'id'> {}
-
-class OrderItem extends Model<IOrderItem, OrderItemCreationAttributes> implements IOrderItem {
-  declare id: string;
-  declare orderId: string;
-  declare medicineId: string;
-  declare dosageOptionId: string;
-  declare quantity: number;
-  declare unitPrice: number;
-  declare totalPrice: number;
-  declare prescriptionRequired: boolean;
+function generateOTP(): string {
+  return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-OrderItem.init(
-  {
-    id: {
-      type: DataTypes.UUID,
-      defaultValue: DataTypes.UUIDV4,
-      primaryKey: true,
-    },
-    orderId: {
-      type: DataTypes.UUID,
-      allowNull: false,
-      references: {
-        model: 'orders',
-        key: 'id',
-      },
-      onDelete: 'CASCADE',
-    },
-    medicineId: {
-      type: DataTypes.UUID,
-      allowNull: false,
-      references: {
-        model: 'medicines',
-        key: 'id',
-      },
-    },
-    dosageOptionId: {
-      type: DataTypes.STRING(100),
-      allowNull: false,
-    },
-    quantity: {
-      type: DataTypes.INTEGER,
-      allowNull: false,
-      validate: {
-        min: 1,
-      },
-    },
-    unitPrice: {
-      type: DataTypes.DECIMAL(10, 2),
-      allowNull: false,
-    },
-    totalPrice: {
-      type: DataTypes.DECIMAL(10, 2),
-      allowNull: false,
-    },
-    prescriptionRequired: {
-      type: DataTypes.BOOLEAN,
-      allowNull: false,
-      defaultValue: false,
-    },
-  },
-  {
-    sequelize,
-    tableName: 'order_items',
-    underscored: false,
-    timestamps: false,
-    indexes: [
-      { fields: ['orderId'] },
-      { fields: ['medicineId'] },
-    ],
+function generateOrderNumber(): string {
+  const timestamp = Date.now().toString(36).toUpperCase();
+  const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+  return `JM-${timestamp}-${random}`;
+}
+
+orderSchema.pre('validate', function (next) {
+  const doc = this as mongoose.HydratedDocument<unknown> & {
+    orderNumber?: string;
+    prescriptionRequired?: boolean;
+    deliveryOTP?: string;
+  };
+  if (!doc.orderNumber) {
+    doc.orderNumber = generateOrderNumber();
   }
-);
+  if (doc.prescriptionRequired && !doc.deliveryOTP) {
+    doc.deliveryOTP = generateOTP();
+  }
+  next();
+});
+
+orderSchema.statics.generateOTP = generateOTP;
+orderSchema.statics.generateOrderNumber = generateOrderNumber;
+
+orderSchema.virtual('user', {
+  ref: 'User',
+  localField: 'userId',
+  foreignField: '_id',
+  justOne: true,
+});
+orderSchema.virtual('warehouse', {
+  ref: 'Warehouse',
+  localField: 'warehouseId',
+  foreignField: '_id',
+  justOne: true,
+});
+orderSchema.virtual('deliveryAddress', {
+  ref: 'Address',
+  localField: 'addressId',
+  foreignField: '_id',
+  justOne: true,
+});
+orderSchema.virtual('reviewer', {
+  ref: 'User',
+  localField: 'reviewedBy',
+  foreignField: '_id',
+  justOne: true,
+});
+orderSchema.virtual('deliveryPartner', {
+  ref: 'User',
+  localField: 'deliveryPartnerId',
+  foreignField: '_id',
+  justOne: true,
+});
+orderSchema.virtual('payments', {
+  ref: 'Payment',
+  localField: '_id',
+  foreignField: 'orderId',
+});
+orderSchema.virtual('orderItems', {
+  ref: 'OrderItem',
+  localField: '_id',
+  foreignField: 'orderId',
+});
+
+addApiJson(orderSchema);
+
+const Order =
+  (mongoose.models.Order as Model<unknown>) || mongoose.model('Order', orderSchema);
+const OrderItem =
+  (mongoose.models.OrderItem as Model<unknown>) || mongoose.model('OrderItem', orderItemSchema);
 
 export { Order, OrderItem };

@@ -1,269 +1,81 @@
-import { DataTypes, Model, Optional } from 'sequelize';
-import sequelize from '../config/postgres.js';
-import { IPayment, IWallet, IWalletTransaction, PaymentMethod, PaymentStatus } from '../types/index.js';
+import mongoose, { Schema, type Model } from 'mongoose';
+import { PaymentMethod, PaymentStatus } from '../types/index.js';
+import { addApiJson, uuidId } from '../utils/mongoSchema.js';
 
-// ==================== PAYMENT MODEL ====================
-
-interface PaymentCreationAttributes extends Optional<IPayment, 'id' | 'createdAt' | 'updatedAt' | 'stripePaymentIntentId' | 'stripeChargeId' | 'walletTransactionId' | 'cardLast4' | 'cardBrand' | 'failureReason' | 'refundedAmount' | 'refundReason' | 'refundedAt'> {}
-
-class Payment extends Model<IPayment, PaymentCreationAttributes> implements IPayment {
-  declare id: string;
-  declare orderId: string;
-  declare userId: string;
-  declare method: PaymentMethod;
-  declare status: PaymentStatus;
-  declare amount: number;
-  declare currency: string;
-  declare stripePaymentIntentId?: string;
-  declare stripeChargeId?: string;
-  declare walletTransactionId?: string;
-  declare cardLast4?: string;
-  declare cardBrand?: string;
-  declare failureReason?: string;
-  declare refundedAmount?: number;
-  declare refundReason?: string;
-  declare refundedAt?: Date;
-  declare createdAt: Date;
-  declare updatedAt: Date;
-}
-
-Payment.init(
+const paymentSchema = new Schema(
   {
-    id: {
-      type: DataTypes.UUID,
-      defaultValue: DataTypes.UUIDV4,
-      primaryKey: true,
-    },
-    orderId: {
-      type: DataTypes.UUID,
-      allowNull: false,
-      references: {
-        model: 'orders',
-        key: 'id',
-      },
-    },
-    userId: {
-      type: DataTypes.UUID,
-      allowNull: false,
-      references: {
-        model: 'users',
-        key: 'id',
-      },
-    },
-    method: {
-      type: DataTypes.ENUM(...Object.values(PaymentMethod)),
-      allowNull: false,
-    },
+    _id: { ...uuidId },
+    orderId: { type: String, required: true, index: true },
+    userId: { type: String, required: true, index: true },
+    method: { type: String, enum: Object.values(PaymentMethod), required: true },
     status: {
-      type: DataTypes.ENUM(...Object.values(PaymentStatus)),
-      allowNull: false,
-      defaultValue: PaymentStatus.PENDING,
+      type: String,
+      enum: Object.values(PaymentStatus),
+      default: PaymentStatus.PENDING,
     },
-    amount: {
-      type: DataTypes.DECIMAL(10, 2),
-      allowNull: false,
-    },
-    currency: {
-      type: DataTypes.STRING(3),
-      allowNull: false,
-      defaultValue: 'USD',
-    },
-    stripePaymentIntentId: {
-      type: DataTypes.STRING(255),
-      allowNull: true,
-    },
-    stripeChargeId: {
-      type: DataTypes.STRING(255),
-      allowNull: true,
-    },
-    walletTransactionId: {
-      type: DataTypes.UUID,
-      allowNull: true,
-    },
-    cardLast4: {
-      type: DataTypes.STRING(4),
-      allowNull: true,
-    },
-    cardBrand: {
-      type: DataTypes.STRING(20),
-      allowNull: true,
-    },
-    failureReason: {
-      type: DataTypes.TEXT,
-      allowNull: true,
-    },
-    refundedAmount: {
-      type: DataTypes.DECIMAL(10, 2),
-      allowNull: true,
-    },
-    refundReason: {
-      type: DataTypes.TEXT,
-      allowNull: true,
-    },
-    refundedAt: {
-      type: DataTypes.DATE,
-      allowNull: true,
-    },
-    createdAt: {
-      type: DataTypes.DATE,
-      defaultValue: DataTypes.NOW,
-    },
-    updatedAt: {
-      type: DataTypes.DATE,
-      defaultValue: DataTypes.NOW,
-    },
+    amount: { type: Number, required: true },
+    currency: { type: String, default: 'USD' },
+    stripePaymentIntentId: String,
+    stripeChargeId: String,
+    walletTransactionId: String,
+    cardLast4: String,
+    cardBrand: String,
+    failureReason: String,
+    refundedAmount: Number,
+    refundReason: String,
+    refundedAt: Date,
   },
-  {
-    sequelize,
-    tableName: 'payments',
-    underscored: false,
-    timestamps: true,
-    indexes: [
-      { fields: ['orderId'] },
-      { fields: ['userId'] },
-      { fields: ['status'] },
-      { fields: ['stripePaymentIntentId'] },
-      { fields: ['createdAt'] },
-    ],
-  }
+  { timestamps: true }
 );
 
-// ==================== WALLET MODEL ====================
-
-interface WalletCreationAttributes extends Optional<IWallet, 'id' | 'createdAt' | 'updatedAt' | 'balance'> {}
-
-class Wallet extends Model<IWallet, WalletCreationAttributes> implements IWallet {
-  declare id: string;
-  declare userId: string;
-  declare balance: number;
-  declare currency: string;
-  declare createdAt: Date;
-  declare updatedAt: Date;
-}
-
-Wallet.init(
+const walletSchema = new Schema(
   {
-    id: {
-      type: DataTypes.UUID,
-      defaultValue: DataTypes.UUIDV4,
-      primaryKey: true,
-    },
-    userId: {
-      type: DataTypes.UUID,
-      allowNull: false,
-      unique: true,
-      references: {
-        model: 'users',
-        key: 'id',
-      },
-      onDelete: 'CASCADE',
-    },
-    balance: {
-      type: DataTypes.DECIMAL(10, 2),
-      allowNull: false,
-      defaultValue: 0,
-      validate: {
-        min: 0,
-      },
-    },
-    currency: {
-      type: DataTypes.STRING(3),
-      allowNull: false,
-      defaultValue: 'USD',
-    },
-    createdAt: {
-      type: DataTypes.DATE,
-      defaultValue: DataTypes.NOW,
-    },
-    updatedAt: {
-      type: DataTypes.DATE,
-      defaultValue: DataTypes.NOW,
-    },
+    _id: { ...uuidId },
+    userId: { type: String, required: true, unique: true },
+    balance: { type: Number, default: 0, min: 0 },
+    currency: { type: String, default: 'USD' },
   },
-  {
-    sequelize,
-    tableName: 'wallets',
-    underscored: false,
-    timestamps: true,
-    indexes: [
-      { fields: ['userId'], unique: true },
-    ],
-  }
+  { timestamps: true }
 );
 
-// ==================== WALLET TRANSACTION MODEL ====================
+walletSchema.virtual('transactions', {
+  ref: 'WalletTransaction',
+  localField: '_id',
+  foreignField: 'walletId',
+});
 
-interface WalletTransactionCreationAttributes extends Optional<IWalletTransaction, 'id' | 'createdAt' | 'referenceType' | 'referenceId'> {}
-
-class WalletTransaction extends Model<IWalletTransaction, WalletTransactionCreationAttributes> implements IWalletTransaction {
-  declare id: string;
-  declare walletId: string;
-  declare type: 'credit' | 'debit';
-  declare amount: number;
-  declare description: string;
-  declare referenceType?: string;
-  declare referenceId?: string;
-  declare balanceAfter: number;
-  declare createdAt: Date;
-}
-
-WalletTransaction.init(
+const walletTransactionSchema = new Schema(
   {
-    id: {
-      type: DataTypes.UUID,
-      defaultValue: DataTypes.UUIDV4,
-      primaryKey: true,
-    },
-    walletId: {
-      type: DataTypes.UUID,
-      allowNull: false,
-      references: {
-        model: 'wallets',
-        key: 'id',
-      },
-      onDelete: 'CASCADE',
-    },
-    type: {
-      type: DataTypes.ENUM('credit', 'debit'),
-      allowNull: false,
-    },
-    amount: {
-      type: DataTypes.DECIMAL(10, 2),
-      allowNull: false,
-    },
-    description: {
-      type: DataTypes.STRING(500),
-      allowNull: false,
-    },
-    referenceType: {
-      type: DataTypes.STRING(50),
-      allowNull: true,
-    },
-    referenceId: {
-      type: DataTypes.UUID,
-      allowNull: true,
-    },
-    balanceAfter: {
-      type: DataTypes.DECIMAL(10, 2),
-      allowNull: false,
-    },
-    createdAt: {
-      type: DataTypes.DATE,
-      defaultValue: DataTypes.NOW,
-    },
+    _id: { ...uuidId },
+    walletId: { type: String, required: true, index: true },
+    type: { type: String, enum: ['credit', 'debit'], required: true },
+    amount: { type: Number, required: true },
+    description: { type: String, required: true },
+    referenceType: String,
+    referenceId: String,
+    balanceAfter: { type: Number, required: true },
+    createdAt: { type: Date, default: () => new Date() },
   },
-  {
-    sequelize,
-    tableName: 'wallet_transactions',
-    underscored: false,
-    timestamps: false,
-    indexes: [
-      { fields: ['walletId'] },
-      { fields: ['type'] },
-      { fields: ['createdAt'] },
-      { fields: ['referenceType', 'referenceId'] },
-    ],
-  }
+  { timestamps: false }
 );
+
+paymentSchema.virtual('order', {
+  ref: 'Order',
+  localField: 'orderId',
+  foreignField: '_id',
+  justOne: true,
+});
+
+addApiJson(paymentSchema);
+addApiJson(walletSchema);
+addApiJson(walletTransactionSchema);
+
+const Payment =
+  (mongoose.models.Payment as Model<unknown>) || mongoose.model('Payment', paymentSchema);
+const Wallet =
+  (mongoose.models.Wallet as Model<unknown>) || mongoose.model('Wallet', walletSchema);
+const WalletTransaction =
+  (mongoose.models.WalletTransaction as Model<unknown>) ||
+  mongoose.model('WalletTransaction', walletTransactionSchema);
 
 export { Payment, Wallet, WalletTransaction };

@@ -5,7 +5,7 @@ import { query, validationResult } from 'express-validator';
 import { Medicine } from '../models/index.js';
 import { asyncHandler, BadRequestError } from '../middleware/errorHandler.js';
 import { searchMedicines, getAutocompleteSuggestions } from '../config/elasticsearch.js';
-import { Op } from 'sequelize';
+import { M } from '../utils/mongoQuery.js';
 
 const router = Router();
 
@@ -26,23 +26,20 @@ router.get('/', [
 
   if (type === 'all' || type === 'medicines') {
     try {
-      // Try Elasticsearch first
       const esResults = await searchMedicines(q as string, {});
       results.medicines = esResults.slice(0, limitNum);
     } catch {
-      // Fallback to database search
-      const medicines = await Medicine.findAll({
-        where: {
-          isActive: true,
-          [Op.or]: [
-            { name: { [Op.iLike]: `%${q}%` } },
-            { genericName: { [Op.iLike]: `%${q}%` } },
-            { category: { [Op.iLike]: `%${q}%` } },
-          ],
-        },
-        attributes: ['id', 'name', 'genericName', 'slug', 'category', 'prescriptionRequirement', 'dosageOptions', 'images'],
-        limit: limitNum,
-      });
+      const medicines = await Medicine.find({
+        isActive: true,
+        $or: [
+          { name: M.iLike(q as string) },
+          { genericName: M.iLike(q as string) },
+          { category: M.iLike(q as string) },
+        ],
+      })
+        .select('id name genericName slug category prescriptionRequirement dosageOptions images')
+        .limit(limitNum)
+        .lean();
       results.medicines = medicines;
     }
   }
@@ -66,25 +63,20 @@ router.get('/suggestions', [
     const suggestions = await getAutocompleteSuggestions(q as string);
     res.json({ success: true, data: { suggestions } });
   } catch {
-    // Fallback to database
-    const medicines = await Medicine.findAll({
-      where: {
-        isActive: true,
-        [Op.or]: [
-          { name: { [Op.iLike]: `${q}%` } },
-          { genericName: { [Op.iLike]: `${q}%` } },
-        ],
-      },
-      attributes: ['id', 'name', 'genericName', 'slug', 'category'],
-      limit: 10,
-      order: [['name', 'ASC']],
-    });
+    const medicines = await Medicine.find({
+      isActive: true,
+      $or: [{ name: M.startsWith(q as string) }, { genericName: M.startsWith(q as string) }],
+    })
+      .select('id name genericName slug category')
+      .sort({ name: 1 })
+      .limit(10)
+      .lean();
 
     res.json({
       success: true,
       data: {
-        suggestions: medicines.map(m => ({
-          id: m.id,
+        suggestions: medicines.map((m: any) => ({
+          id: m.id ?? m._id,
           text: m.name,
           subtext: m.genericName,
           slug: m.slug,
@@ -99,8 +91,7 @@ router.get('/suggestions', [
  * @route   GET /api/v1/search/popular
  * @desc    Get popular search terms
  */
-router.get('/popular', asyncHandler(async (req: Request, res: Response) => {
-  // In production, this would be based on actual search analytics
+router.get('/popular', asyncHandler(async (_req: Request, res: Response) => {
   const popularTerms = [
     'Tylenol',
     'Advil',
@@ -119,17 +110,11 @@ router.get('/popular', asyncHandler(async (req: Request, res: Response) => {
  * @route   GET /api/v1/search/categories
  * @desc    Get all categories
  */
-router.get('/categories', asyncHandler(async (req: Request, res: Response) => {
-  const categories = await Medicine.findAll({
-    attributes: ['category'],
-    where: { isActive: true },
-    group: ['category'],
-    raw: true,
-  });
-
+router.get('/categories', asyncHandler(async (_req: Request, res: Response) => {
+  const rows = await Medicine.distinct('category', { isActive: true });
   res.json({
     success: true,
-    data: { categories: categories.map((c: any) => c.category).sort() },
+    data: { categories: (rows as string[]).filter(Boolean).sort() },
   });
 }));
 

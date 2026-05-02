@@ -22,6 +22,11 @@
     "lint:backend": "cd backend && npm run lint"
   },
   "keywords": [
+    "mern",
+    "mongodb",
+    "express",
+    "react",
+    "node",
     "pharmacy",
     "medicine",
     "delivery",
