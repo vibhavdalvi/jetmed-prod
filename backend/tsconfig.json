@@ -14,17 +14,6 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "baseUrl": "./src",
-    "paths": {
-      "@config/*": ["config/*"],
-      "@controllers/*": ["controllers/*"],
-      "@models/*": ["models/*"],
-      "@routes/*": ["routes/*"],
-      "@middleware/*": ["middleware/*"],
-      "@services/*": ["services/*"],
-      "@utils/*": ["utils/*"],
-      "@types/*": ["types/*"]
-    },
     "typeRoots": ["./node_modules/@types", "./src/types"]
   },
   "include": ["src/**/*"],
